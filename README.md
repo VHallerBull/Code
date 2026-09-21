@@ -59,5 +59,9 @@ of `07` if your paths differ.
   interfere with git's internal files if two machines work on the folder at once. Work on one machine at a time, or
   keep the repository's history somewhere else (`git remote add origin ...; git push`).
 - `ModelRuns/` is outside the repository on purpose: outputs are large (hundreds of MB per C~scape project).
+  It is also inside OneDrive, which will try to sync every file the scripts write. In testing this made deleting a
+  freshly written output folder fail with "permission denied" while OneDrive held the files (07 now warns and
+  carries on instead of stopping), and syncing gigabytes of model output is slow and uses quota. If that bothers you,
+  pause OneDrive while a big run is writing, or set `ModelRuns` to "Free up space" / exclude it from sync.
 - `Manifest.toml` is committed for reproducibility of the registered packages; if it becomes noisy, regenerate it with
   `julia --project=. -e 'using Pkg; Pkg.update()'` and commit the result deliberately.
