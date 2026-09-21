@@ -1,0 +1,14 @@
+# Outputs belong in ../ModelRuns (outside this repo). These catch anything that lands here by accident.
+Outputs/
+images/
+*.jld2
+*.png
+*.nc
+*.zarr/
+*.log
+
+# editors / OS
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
