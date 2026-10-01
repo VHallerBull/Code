@@ -1,36 +1,42 @@
 #=
-07_COMPARE_THREE_ENGINES.jl
+07_COMPARE_FOUR_ENGINES.jl
 
-CoralBlox vs C~scape vs CoralPop on ONE ADRIA domain and ONE shared climate/cyclone member, each
+CoralBlox vs C~scape vs CoralPop vs Kora on ONE ADRIA domain and ONE shared climate/cyclone member, each
 sampled with ADRIA's own sampler from its own factor spec, each returning an ADRIA `ResultSet`, and
 each analysed with the SAME ADRIA metric functions and reef indicators. Writes figures and a summary
-table to `../ModelRuns/ThreeEngineComparison/`.
+table to `../ModelRuns/FourEngineComparison/`.
 
-    julia --project=. 07_COMPARE_THREE_ENGINES.jl        # from this folder
+    julia +1.12 --project=. 07_COMPARE_FOUR_ENGINES.jl        # from this folder -- Kora needs Julia 1.12+
 
-How the three engines are obtained
+How the four engines are obtained
 - CoralBlox: run here (fast) with `ADRIA.run_scenarios(dom, scens, RCP)`, or reloaded (`CORALBLOX_MODE=:load`).
-- CoralPop:  run here through ADRIA's new `:coralpop` engine (needs CoralPopInterface + the Python
+- CoralPop:  run here through ADRIA's `:coralpop` engine (needs CoralPopInterface + the Python
              `coralpop` engine, see the Python setup below), or reloaded (`CORALPOP_MODE=:load`).
+- Kora:      run here through ADRIA's `:kora` engine (needs KoraInterface; pure Julia, no external
+             interpreter), or reloaded (`KORA_MODE=:load`).
 - C~scape:   NOT run here -- it needs the R-fitted demography, ~4 GB per scenario and a long run. It is
              loaded from the result set that `06_RUNNING_A_NEW_PROJECT.jl` saves (`my_run.jld2` +
              `samples.jld2`) in its own `ModelRuns/<CSCAPE_PROJECT_NAME>/` folder. If that is missing, the
-             comparison continues with the other two engines and says so.
+             comparison continues with the other engines and says so.
 
 Fairness checks made below (the script stops rather than compare unlike things): all engines must use
 the same locations, the same years, and -- for C~scape, whose settings 06 recorded -- the same domain,
 RCP, DHW/wave/cyclone member and disturbance switch.
 
 Time axis: C~scape stores its initial state under the year BEFORE it starts (2024) and simulates 2025-2099;
-CoralBlox and CoralPop label their initial state 2025. The comparison uses the common years (2025-2099), so
-C~scape's 2025 state has already had one year of dynamics while the others' has not -- a one-year offset in
-where each engine starts, not in which year's climate it sees.
+CoralBlox, CoralPop and Kora label their initial state 2025. The comparison uses the common years
+(2025-2099), so C~scape's 2025 state has already had one year of dynamics while the others' has not -- a
+one-year offset in where each engine starts, not in which year's climate it sees.
 
 What is compared: domain-mean (k-area weighted) relative cover, juveniles, shelter volume, juvenile
-indicator, Reef Condition Index and Reef Tourism Index per engine, taxa cover per engine (each engine
-keeps its OWN functional groups: 5 / 6 / 3), and PAWN sensitivity of final-year cover to each engine's own
-sampled factors. The three engines' factor spaces are different by design, so PAWN rankings are compared
-per engine, not factor by factor.
+indicator, Reef Condition Index and Reef Tourism Index per engine, taxa cover per engine (CoralBlox, Kora
+and C~scape share ADRIA's 5 functional groups; CoralPop keeps its own 3 morphologies), and PAWN sensitivity
+of final-year cover to each engine's own sampled factors. The engines' factor spaces are different by
+design, so PAWN rankings are compared per engine, not factor by factor.
+
+Kora has no cyclone-mortality pathway (a documented limitation of the published model, not a bug here --
+see `KoraInterface.jl/src/domain_translator.jl`), so its trajectories reflect DHW-only disturbance even
+when `CYCLONE_IDX` is set for the other engines.
 
 CAUTION: PAWN needs N/S > 80 (see `ADRIAanalysis.sensitivity.pawn`), i.e. N_SAMPLES > 800 at S=10. At the
 default N_SAMPLES the PAWN panels are illustrative only.
@@ -54,7 +60,7 @@ haskey(ENV, "JULIA_PYTHONCALL_EXE") ||
 haskey(ENV, "CORALPOP_ENGINE_DIR") ||
     (ENV["CORALPOP_ENGINE_DIR"] = raw"C:\Users\vhaller\Documents\GitHub\CoralPop-Engine")
 
-const PROJECT_NAME = _cfg("PROJECT_NAME", "ThreeEngineComparison")          # output folder under ModelRuns/
+const PROJECT_NAME = _cfg("PROJECT_NAME", "FourEngineComparison")          # output folder under ModelRuns/
 const CSCAPE_PROJECT_NAME = _cfg("CSCAPE_PROJECT_NAME", "AdjustedRecruitment10_Disturbance")   # 06's project
 
 ## An ADRIA domain package on disk, and the RCP -- keep identical to 06 (checked below for C~scape).
@@ -76,13 +82,17 @@ const N_SAMPLES = parse(Int, _cfg("N_SAMPLES", "8"))
 ## :run = run it here; :load = reload what an earlier run of THIS script saved. C~scape: :load (from 06) or :skip.
 const CORALBLOX_MODE = Symbol(_cfg("CORALBLOX_MODE", "run"))
 const CORALPOP_MODE = Symbol(_cfg("CORALPOP_MODE", "run"))
+const KORA_MODE = Symbol(_cfg("KORA_MODE", "run"))
 const CSCAPE_MODE = Symbol(_cfg("CSCAPE_MODE", "load"))
 
 ## CoralPop parallelism: Distributed workers, each with its own Python interpreter (0 = this process).
 const CORALPOP_N_WORKERS = parse(Int, _cfg("CORALPOP_N_WORKERS", "2"))
+## Kora parallelism: a `Threads.@threads` cap, not separate processes (pure Julia) -- start this script
+## with `julia -t N` for a value above 1 to do anything.
+const KORA_N_WORKERS = parse(Int, _cfg("KORA_N_WORKERS", "1"))
 
 for (n, m, ok) in (("CORALBLOX_MODE", CORALBLOX_MODE, (:run, :load)), ("CORALPOP_MODE", CORALPOP_MODE, (:run, :load)),
-    ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)))
+    ("KORA_MODE", KORA_MODE, (:run, :load)), ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)))
     m in ok || error("$n must be one of $ok, got :$m")
 end
 
@@ -90,7 +100,7 @@ end
 # Packages
 # =============================================================================
 
-using ADRIA, CscapeInterface, CoralPopInterface, DataFrames, Statistics, Printf
+using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, DataFrames, Statistics, Printf
 using ADRIAanalysis
 ## ADRIAviz's Makie extension needs ADRIAviz + Makie/GeoMakie/GraphMakie loaded; CairoMakie (a pure
 ## software rasteriser) rather than WGLMakie because this is a headless script writing PNGs. `import`, not
@@ -204,7 +214,42 @@ push!(engines, EngineRun(:coralpop, "CoralPop", "#009E73", rs_cp,
     DataFrames.select(rs_cp.inputs, cp_varying), CORALPOP_MORPHS))
 
 # =============================================================================
-# 4. C~scape -- loaded from 06's outputs
+# 4. Kora -- through ADRIA's own entry point
+# =============================================================================
+# `:kora` is provided by the ADRIAKoraExt extension (active because KoraInterface is loaded).
+# Kora is pure Julia (no Python bridge) and its 5 groups/7 size classes ARE ADRIA's own, so this
+# section needs no group-aggregation or size-rebinning caveats, unlike CoralPop's.
+
+const KORA_RESULT_FILE = joinpath(FPATH, "kora_result.jld2")
+
+if KORA_MODE === :run
+    kora_spec_ = kora_spec(; rcp=parse(Int, RCP), year_start=first(YEARS), year_end=last(YEARS))
+    scens_kora = ADRIA.sample(kora_spec_, N_SAMPLES)
+    kora_dir = joinpath(FPATH, "kora")
+    try
+        rm(kora_dir; force=true, recursive=true)
+    catch err
+        @warn "Could not clear the previous Kora output folder (OneDrive may be syncing it); continuing" kora_dir exception = err
+    end
+    rs_kora = ADRIA.run_scenarios(
+        dom, scens_kora, RCP, :kora;
+        kora_fpath=kora_dir, dhw_idx=DHW_IDX, wave_idx=WAVE_IDX, cyclone_idx=CYCLONE_IDX,
+        n_workers=KORA_N_WORKERS, spec=kora_spec_
+    )
+    save_kora_results(rs_kora, KORA_RESULT_FILE)
+    kora_varying = kora_spec_.fieldname[.!kora_spec_.is_constant]
+    JLD2.save(SAMPLES_FILE, merge(JLD2.load(SAMPLES_FILE),
+        Dict("scens_kora" => scens_kora, "kora_varying" => String.(kora_varying))))
+else
+    isfile(KORA_RESULT_FILE) || error("KORA_MODE=:load but no earlier run saved at $KORA_RESULT_FILE")
+    rs_kora = load_kora_results(KORA_RESULT_FILE)
+    kora_varying = Symbol.(JLD2.load(SAMPLES_FILE)["kora_varying"])
+end
+push!(engines, EngineRun(:kora, "Kora", "#CC79A7", rs_kora,
+    DataFrames.select(rs_kora.inputs, kora_varying), KORA_GROUPS))
+
+# =============================================================================
+# 5. C~scape -- loaded from 06's outputs
 # =============================================================================
 
 const CS_DIR = joinpath(MODEL_RUNS_DIR, CSCAPE_PROJECT_NAME)
@@ -286,7 +331,7 @@ end
 @info "Engines in the comparison" labels = [e.label for e in engines] n_scenarios = [ADRIA.n_scenarios(e.rs) for e in engines]
 
 # =============================================================================
-# 5. The same ADRIA metrics for every engine
+# 6. The same ADRIA metrics for every engine
 # =============================================================================
 
 "k-area weighted domain mean of a `[timesteps, locations, scenarios]` metric -> `[timesteps, scenarios]`."
@@ -352,10 +397,10 @@ end
 plottable(e, metric) = INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME || !(metric in SHELTER_DEPENDENT && e.key in invalid_shelter)
 
 # =============================================================================
-# 6. Figures
+# 7. Figures
 # =============================================================================
 
-## --- 6.1 all engines, one panel per metric: mean over scenarios with a min-max band ---
+## --- 7.1 all engines, one panel per metric: mean over scenarios with a min-max band ---
 fig_cmp = CairoMakie.Figure(; size=(1300, 750))
 for (i, (name, title, _)) in enumerate(METRICS)
     omitted = [e.label for e in engines if !plottable(e, name)]
@@ -374,7 +419,7 @@ end
 CairoMakie.Label(fig_cmp[0, :], "Domain-mean metrics, mean and min-max over $(N_SAMPLES) sampled scenarios per engine"; fontsize=18)
 CairoMakie.save(joinpath(IMAGES_DIR, "compare_metrics.png"), fig_cmp; px_per_unit=3)
 
-## --- 6.2 each engine through ADRIA's own scenario plot ---
+## --- 7.2 each engine through ADRIA's own scenario plot ---
 for e in engines
     dc = ADRIA.DataCube(domain[e.key][:relative_cover]; timesteps=YEARS, scenarios=1:ADRIA.n_scenarios(e.rs))
     fig = if "guided" in names(e.rs.inputs)
@@ -391,7 +436,9 @@ for e in engines
     CairoMakie.save(joinpath(IMAGES_DIR, "trajectories_$(e.key).png"), fig; px_per_unit=3)
 end
 
-## --- 6.3 taxa cover, each engine keeping its own functional groups ---
+## --- 7.3 taxa cover, each engine keeping its own functional groups ---
+## CoralBlox and Kora use ADRIA's own 5 groups and need no special-casing; CoralPop keeps its own 3
+## morphologies (series labels only); C~scape's `:species` axis needs the dedicated workaround below.
 for e in engines
     fig = if e.key === :cscape
         ## `relative_taxa_cover`'s Metric wrapper fails on CScapeResultSet's `:species` axis; use the plain
@@ -410,7 +457,7 @@ for e in engines
 end
 
 # =============================================================================
-# 7. PAWN sensitivity of final-year cover to each engine's own factors
+# 8. PAWN sensitivity of final-year cover to each engine's own factors
 # =============================================================================
 ## `S` scaled down from N_SAMPLES so slicing doesn't degenerate; this does NOT fix the small-sample bias
 ## (see the CAUTION in the header).
@@ -428,7 +475,7 @@ for e in engines
 end
 
 # =============================================================================
-# 8. Summary table
+# 9. Summary table
 # =============================================================================
 
 rows = NamedTuple[]

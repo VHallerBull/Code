@@ -21,6 +21,8 @@ Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 GeoMakie = "db073c08-6b98-4ee5-b6a4-5efafb3259c6"
 GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Kora = "63f594c6-e77c-4cfd-819e-df68f57e9897"
+KoraInterface = "f2396b7f-ab6b-447e-a8d8-68bf8c91238a"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 XLSX = "fdbf4ff8-1666-58a4-91e7-1b58723a45e0"
@@ -34,6 +36,8 @@ ADRIAviz = {path = "../../../../Documents/GitHub/ADRIA.jl/ADRIAviz"}
 CScape = {path = "../../../../Documents/GitHub/CScape.jl"}
 CoralPopInterface = {path = "../../../../Documents/GitHub/CoralPopInterface.jl"}
 CscapeInterface = {path = "../../../../Documents/GitHub/CscapeInterface.jl"}
+Kora = {path = "../../../../Documents/GitHub/Kora.jl"}
+KoraInterface = {path = "../../../../Documents/GitHub/KoraInterface.jl"}
 
 [compat]
-julia = "1.11"
+julia = "1.12"
