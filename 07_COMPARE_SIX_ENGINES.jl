@@ -22,21 +22,23 @@ How the six engines are obtained
              data for this domain -- see `CORSETInterface.jl/src/domain_translator.jl` before trusting
              CORSET's absolute trajectories here, as opposed to its relative response to disturbance.
              Reloaded with `CORSET_MODE=:load`.
+- ReefMod:   run here through ADRIA's `:reefmod` engine (needs ReefModInterface AND a real MATLAB on
+             `PATH` -- see the setup below), or reloaded (`REEFMOD_MODE=:load`). Unlike
+             CoralPop/Kora/CORSET, each scenario is a `matlab -batch ...` SUBPROCESS, not an
+             in-process call -- see `ReefModInterface.jl/src/reefmod_bridge.jl`. No local MATLAB
+             license? `ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh` runs the same thing on an
+             HPC's Slurm-scheduled license instead; copy its `reefmod_result.jld2` into
+             `ModelRuns/<PROJECT_NAME>/` and use `REEFMOD_MODE=:load` here either way. The eventual
+             target is all six engines (this one included) inside one Apptainer image on the HPC, at
+             which point `:run` here and the HPC pipeline converge to the same MATLAB.
 - C~scape:   NOT run here -- it needs the R-fitted demography, ~4 GB per scenario and a long run. It is
              loaded from the result set that `06_RUNNING_A_NEW_PROJECT.jl` saves (`my_run.jld2` +
              `samples.jld2`) in its own `ModelRuns/<CSCAPE_PROJECT_NAME>/` folder. If that is missing, the
              comparison continues with the other engines and says so.
-- ReefMod:   NOT run here either -- it needs a Slurm-scheduled MATLAB license on the HPC (no local
-             license at all). The whole pipeline (ADRIA sampling through to the saved result set) runs
-             on the HPC via `ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh`; this script only
-             loads what that pipeline saved (`reefmod_result.jld2` + `job_meta.jld2`) from its own
-             `ModelRuns/<REEFMOD_PROJECT_NAME>/` folder, the same `:load`-only shape as C~scape. If
-             that is missing, the comparison continues with the other engines and says so. See
-             `ReefModInterface.jl/README.md` for why there is no `:reefmod` ADRIA engine to run inline.
 
 Fairness checks made below (the script stops rather than compare unlike things): all engines must use
-the same locations, the same years, and -- for C~scape and ReefMod, whose settings were recorded when
-their results were produced -- the same domain, RCP, DHW/wave/cyclone member and disturbance switch.
+the same locations, the same years, and -- for C~scape, whose settings were recorded when its result
+was produced -- the same domain, RCP, DHW/wave/cyclone member and disturbance switch.
 
 Time axis: C~scape stores its initial state under the year BEFORE it starts (2024) and simulates 2025-2099;
 CoralBlox, CoralPop, Kora, CORSET and ReefMod label their initial state 2025. The comparison uses the
@@ -88,9 +90,16 @@ haskey(ENV, "JULIA_PYTHONCALL_EXE") ||
 haskey(ENV, "CORALPOP_ENGINE_DIR") ||
     (ENV["CORALPOP_ENGINE_DIR"] = raw"C:\Users\vhaller\Documents\GitHub\CoralPop-Engine")
 
+## MATLAB for ReefMod. Read by ReefModInterface.run_reefmod_scenarios (not at `using` time -- each
+## scenario is a fresh subprocess -- but set here anyway, alongside the Python setup above, so every
+## engine's external-tool config lives in one place). Defaults: `matlab` on PATH; the sibling
+## `ReefMod-GBR` clone.
+haskey(ENV, "REEFMOD_MATLAB_EXE") || (ENV["REEFMOD_MATLAB_EXE"] = "matlab")
+haskey(ENV, "REEFMOD_GBR_DIR") ||
+    (ENV["REEFMOD_GBR_DIR"] = raw"C:\Users\vhaller\Documents\GitHub\ReefMod-GBR")
+
 const PROJECT_NAME = _cfg("PROJECT_NAME", "SixEngineComparison")           # output folder under ModelRuns/
 const CSCAPE_PROJECT_NAME = _cfg("CSCAPE_PROJECT_NAME", "AdjustedRecruitment10_Disturbance")   # 06's project
-const REEFMOD_PROJECT_NAME = _cfg("REEFMOD_PROJECT_NAME", "ReefModHPCRun")   # ReefModInterface.jl HPC pipeline's REEFMOD_JOB_DIR basename
 
 ## An ADRIA domain package on disk, and the RCP -- keep identical to 06 (checked below for C~scape).
 const DOMAIN_PATH = _cfg("DOMAIN_PATH", raw"C:\Users\vhaller\Downloads\Moore_2025-08-22_v080")
@@ -108,13 +117,15 @@ const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) : (64, 1, 1)
 ## ADRIA.sample's default Sobol' sampler requires a power of 2.
 const N_SAMPLES = parse(Int, _cfg("N_SAMPLES", "8"))
 
-## :run = run it here; :load = reload what an earlier run of THIS script saved. C~scape/ReefMod: :load
-## (from 06 / the HPC pipeline) or :skip -- neither can ever be :run from this script, see the header.
+## :run = run it here; :load = reload what an earlier run of THIS script saved. C~scape: :load (from
+## 06) or :skip -- it can never be :run from this script, see the header.
 const CORALBLOX_MODE = Symbol(_cfg("CORALBLOX_MODE", "run"))
 const CORALPOP_MODE = Symbol(_cfg("CORALPOP_MODE", "run"))
 const KORA_MODE = Symbol(_cfg("KORA_MODE", "run"))
 const CORSET_MODE = Symbol(_cfg("CORSET_MODE", "run"))
 const CSCAPE_MODE = Symbol(_cfg("CSCAPE_MODE", "load"))
+## ReefMod defaults to :load (no local MATLAB on this machine as of writing) -- set
+## CMR_REEFMOD_MODE=run once a real `matlab` is on PATH here (workstation license or Apptainer).
 const REEFMOD_MODE = Symbol(_cfg("REEFMOD_MODE", "load"))
 
 ## CoralPop parallelism: Distributed workers, each with its own Python interpreter (0 = this process).
@@ -123,6 +134,10 @@ const CORALPOP_N_WORKERS = parse(Int, _cfg("CORALPOP_N_WORKERS", "2"))
 ## script with `julia -t N` for a value above 1 to do anything.
 const KORA_N_WORKERS = parse(Int, _cfg("KORA_N_WORKERS", "1"))
 const CORSET_N_WORKERS = parse(Int, _cfg("CORSET_N_WORKERS", "1"))
+## ReefMod parallelism: concurrent `matlab` subprocesses (each its own OS process and MATLAB license
+## checkout -- like CoralPop's Distributed workers, not Kora/CORSET's thread cap). Keep this within
+## however many MATLAB licenses/cores are actually available wherever this runs.
+const REEFMOD_N_WORKERS = parse(Int, _cfg("REEFMOD_N_WORKERS", "1"))
 
 ## CORSET needs consumer (fish/urchin) biomass that no ADRIA domain carries at all -- see
 ## `CORSETInterface.jl/src/domain_translator.jl`. These are PLACEHOLDER values (kg/km^2) for a
@@ -139,7 +154,7 @@ const CORSET_USE_DHW_AS_BLEACHING = _cfg("CORSET_USE_DHW_AS_BLEACHING", "false")
 
 for (n, m, ok) in (("CORALBLOX_MODE", CORALBLOX_MODE, (:run, :load)), ("CORALPOP_MODE", CORALPOP_MODE, (:run, :load)),
     ("KORA_MODE", KORA_MODE, (:run, :load)), ("CORSET_MODE", CORSET_MODE, (:run, :load)),
-    ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)), ("REEFMOD_MODE", REEFMOD_MODE, (:load, :skip)))
+    ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)), ("REEFMOD_MODE", REEFMOD_MODE, (:run, :load, :skip)))
     m in ok || error("$n must be one of $ok, got :$m")
 end
 
@@ -416,45 +431,55 @@ push!(engines, EngineRun(:corset, "CORSET", "#E69F00", rs_corset,
     DataFrames.select(rs_corset.inputs, corset_varying), CORSET_GROUPS))
 
 # =============================================================================
-# 7. ReefMod -- loaded from the HPC pipeline's saved result
+# 7. ReefMod -- through ADRIA's own entry point
 # =============================================================================
-# Produced entirely on the HPC by ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh (ADRIA sampling
-# through to the saved result set -- see that package's README for why there is no `:reefmod` ADRIA
-# engine to run inline here, the same reasoning as C~scape above). `job_meta.jld2` records the settings
-# the HPC pipeline's Stage A used; `reefmod_result.jld2` is the saved `ReefModResultSet`. Both must be
-# scp'd back into `ModelRuns/<REEFMOD_PROJECT_NAME>/` from the HPC's `$REEFMOD_JOB_DIR`.
+# `:reefmod` is provided by the ADRIAReefModExt extension (active because ReefModInterface is
+# loaded). Unlike CoralPop/Kora/CORSET, ReefMod is real MATLAB: each scenario is run as a `matlab
+# -batch ...` SUBPROCESS, not an in-process call -- see `ReefModInterface.jl/src/reefmod_bridge.jl`.
+# Needs a real `matlab` on PATH (ENV["REEFMOD_MATLAB_EXE"], set above) and the local `ReefMod-GBR`
+# clone with ReefModInterface.jl's override hooks applied (ENV["REEFMOD_GBR_DIR"], also set above;
+# see that clone's LOCAL_CHANGES.md). No MATLAB here? Run
+# `ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh` on an HPC with a Slurm-scheduled license
+# instead, copy its `reefmod_result.jld2` to `REEFMOD_RESULT_FILE` below, and use
+# `REEFMOD_MODE=:load` -- `load_reefmod_results` reads either source's output the same way.
 
-const RM_DIR = joinpath(MODEL_RUNS_DIR, REEFMOD_PROJECT_NAME)
-const RM_RESULT_FILE = joinpath(RM_DIR, "reefmod_result.jld2")
-const RM_META_FILE = joinpath(RM_DIR, "job_meta.jld2")
+const REEFMOD_RESULT_FILE = joinpath(FPATH, "reefmod_result.jld2")
 
-if REEFMOD_MODE === :load
-    if isfile(RM_RESULT_FILE) && isfile(RM_META_FILE)
-        rm_meta = JLD2.load(RM_META_FILE)
-
-        ## The comparison is only meaningful if the HPC pipeline used the same settings as this script.
-        cfg = Dict{String,Any}(
-            "DOMAIN_PATH" => DOMAIN_PATH, "RCP" => RCP, "DHW_IDX" => DHW_IDX,
-            "YEAR_START" => first(YEARS), "YEAR_END" => last(YEARS)
-        )
-        mismatch = [k for (k, v) in cfg if get(rm_meta["fairness"], k, missing) != v]
-        isempty(mismatch) || error(
-            "The ReefMod HPC run (", RM_DIR, ") used different settings than this script for: ",
-            join(["$k (HPC: $(get(rm_meta["fairness"], k, missing)), 07: $(cfg[k]))" for k in mismatch], "; "),
-            ". Re-run the HPC pipeline with matching settings or change this script's CONFIG."
-        )
-
-        rs_rm = load_reefmod_results(RM_RESULT_FILE)
-        rm_spec_disk = rm_meta["spec"]
-        rm_varying = rm_spec_disk === nothing ? Symbol.(filter(!=("ID"), names(rm_meta["scenarios"]))) :
-                     rm_spec_disk.fieldname[.!rm_spec_disk.is_constant]
-        push!(engines, EngineRun(:reefmod, "ReefMod", "#56B4E9", rs_rm,
-            DataFrames.select(rm_meta["scenarios"], rm_varying), REEFMOD_GROUPS))
+if REEFMOD_MODE === :run
+    reefmod_spec_ = reefmod_spec(; rcp=parse(Int, RCP), year_start=first(YEARS), year_end=last(YEARS))
+    scens_reefmod = ADRIA.sample(reefmod_spec_, N_SAMPLES)
+    reefmod_dir = joinpath(FPATH, "reefmod")
+    try
+        rm(reefmod_dir; force=true, recursive=true)
+    catch err
+        @warn "Could not clear the previous ReefMod output folder (OneDrive may be syncing it); continuing" reefmod_dir exception = err
+    end
+    rs_reefmod = ADRIA.run_scenarios(
+        dom, scens_reefmod, RCP, :reefmod;
+        reefmod_fpath=reefmod_dir, dhw_idx=DHW_IDX, n_workers=REEFMOD_N_WORKERS, spec=reefmod_spec_
+    )
+    save_reefmod_results(rs_reefmod, REEFMOD_RESULT_FILE)
+elseif REEFMOD_MODE === :load
+    if isfile(REEFMOD_RESULT_FILE)
+        rs_reefmod = load_reefmod_results(REEFMOD_RESULT_FILE)
     else
         @warn "ReefMod results not found -- continuing without it. " *
-              "Run ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh on the HPC first, then scp back " *
-              "reefmod_result.jld2 and job_meta.jld2." RM_DIR
+              "Run with REEFMOD_MODE=:run (needs matlab on PATH), or copy a " *
+              "ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh result to REEFMOD_RESULT_FILE." REEFMOD_RESULT_FILE
     end
+    ## CAUTION: unlike C~scape's dedicated settings check above, a :load here only gets the generic
+    ## loc_ids/years check below -- if REEFMOD_RESULT_FILE came from a separate HPC pipeline run with a
+    ## different DHW_IDX than this script's, that silently goes undetected (loc_ids/years don't depend
+    ## on it). Safe when :load is reloading THIS project's own earlier :run (the common case); double
+    ## check DHW_IDX by hand when copying in a result produced elsewhere.
+end
+if @isdefined(rs_reefmod)
+    ## `reefmod_varying` comes from the result set's OWN `model_spec` (set from `spec=` whichever way
+    ## `rs_reefmod` was produced -- :run above, or `load_reefmod_results(...; spec=...)` in
+    ## `sandbox/03_load_hpc_results.jl`), not a separate side-channel -- works the same for either source.
+    reefmod_varying = rs_reefmod.model_spec.fieldname[.!rs_reefmod.model_spec.is_constant]
+    push!(engines, EngineRun(:reefmod, "ReefMod", "#56B4E9", rs_reefmod,
+        DataFrames.select(rs_reefmod.inputs, reefmod_varying), REEFMOD_GROUPS))
 end
 
 ## --- every engine must describe the same locations and years ---
