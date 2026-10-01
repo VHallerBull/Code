@@ -1,42 +1,70 @@
 #=
-07_COMPARE_FOUR_ENGINES.jl
+07_COMPARE_SIX_ENGINES.jl
 
-CoralBlox vs C~scape vs CoralPop vs Kora on ONE ADRIA domain and ONE shared climate/cyclone member, each
-sampled with ADRIA's own sampler from its own factor spec, each returning an ADRIA `ResultSet`, and
-each analysed with the SAME ADRIA metric functions and reef indicators. Writes figures and a summary
-table to `../ModelRuns/FourEngineComparison/`.
+CoralBlox vs C~scape vs CoralPop vs Kora vs ReefMod vs CORSET on ONE ADRIA domain and ONE shared
+climate/cyclone member, each sampled with ADRIA's own sampler from its own factor spec, each returning
+an ADRIA `ResultSet`, and each analysed with the SAME ADRIA metric functions and reef indicators.
+Writes figures and a summary table to `../ModelRuns/SixEngineComparison/`.
 
-    julia +1.12 --project=. 07_COMPARE_FOUR_ENGINES.jl        # from this folder -- Kora needs Julia 1.12+
+    julia +1.12 --project=. 07_COMPARE_SIX_ENGINES.jl        # from this folder -- Kora needs Julia 1.12+
 
-How the four engines are obtained
+How the six engines are obtained
 - CoralBlox: run here (fast) with `ADRIA.run_scenarios(dom, scens, RCP)`, or reloaded (`CORALBLOX_MODE=:load`).
 - CoralPop:  run here through ADRIA's `:coralpop` engine (needs CoralPopInterface + the Python
              `coralpop` engine, see the Python setup below), or reloaded (`CORALPOP_MODE=:load`).
 - Kora:      run here through ADRIA's `:kora` engine (needs KoraInterface; pure Julia, no external
              interpreter), or reloaded (`KORA_MODE=:load`).
+- CORSET:    run here through ADRIA's `:corset` engine (needs CORSETInterface; pure Julia). CORSET is a
+             from-scratch reimplementation -- its own source was never published, see
+             `CORSET.jl/CAVEATS.md` -- with no coral size structure and no fish/urchin/benthic state of
+             its own, so an ADRIA domain supplies far less of what it needs than for the other three.
+             The `CORSET_INITIAL_*_BIOMASS` constants below are PLACEHOLDER consumer biomass, not survey
+             data for this domain -- see `CORSETInterface.jl/src/domain_translator.jl` before trusting
+             CORSET's absolute trajectories here, as opposed to its relative response to disturbance.
+             Reloaded with `CORSET_MODE=:load`.
 - C~scape:   NOT run here -- it needs the R-fitted demography, ~4 GB per scenario and a long run. It is
              loaded from the result set that `06_RUNNING_A_NEW_PROJECT.jl` saves (`my_run.jld2` +
              `samples.jld2`) in its own `ModelRuns/<CSCAPE_PROJECT_NAME>/` folder. If that is missing, the
              comparison continues with the other engines and says so.
+- ReefMod:   NOT run here either -- it needs a Slurm-scheduled MATLAB license on the HPC (no local
+             license at all). The whole pipeline (ADRIA sampling through to the saved result set) runs
+             on the HPC via `ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh`; this script only
+             loads what that pipeline saved (`reefmod_result.jld2` + `job_meta.jld2`) from its own
+             `ModelRuns/<REEFMOD_PROJECT_NAME>/` folder, the same `:load`-only shape as C~scape. If
+             that is missing, the comparison continues with the other engines and says so. See
+             `ReefModInterface.jl/README.md` for why there is no `:reefmod` ADRIA engine to run inline.
 
 Fairness checks made below (the script stops rather than compare unlike things): all engines must use
-the same locations, the same years, and -- for C~scape, whose settings 06 recorded -- the same domain,
-RCP, DHW/wave/cyclone member and disturbance switch.
+the same locations, the same years, and -- for C~scape and ReefMod, whose settings were recorded when
+their results were produced -- the same domain, RCP, DHW/wave/cyclone member and disturbance switch.
 
 Time axis: C~scape stores its initial state under the year BEFORE it starts (2024) and simulates 2025-2099;
-CoralBlox, CoralPop and Kora label their initial state 2025. The comparison uses the common years
-(2025-2099), so C~scape's 2025 state has already had one year of dynamics while the others' has not -- a
-one-year offset in where each engine starts, not in which year's climate it sees.
+CoralBlox, CoralPop, Kora, CORSET and ReefMod label their initial state 2025. The comparison uses the
+common years (2025-2099), so C~scape's 2025 state has already had one year of dynamics while the others'
+has not -- a one-year offset in where each engine starts, not in which year's climate it sees.
 
 What is compared: domain-mean (k-area weighted) relative cover, juveniles, shelter volume, juvenile
 indicator, Reef Condition Index and Reef Tourism Index per engine, taxa cover per engine (CoralBlox, Kora
-and C~scape share ADRIA's 5 functional groups; CoralPop keeps its own 3 morphologies), and PAWN sensitivity
-of final-year cover to each engine's own sampled factors. The engines' factor spaces are different by
-design, so PAWN rankings are compared per engine, not factor by factor.
+and C~scape share ADRIA's 5 functional groups; CoralPop and ReefMod keep their own 3/6 groups, CORSET its
+own 2 -- brooding/spawning), and PAWN sensitivity of final-year cover to each engine's own sampled
+factors. The engines' factor spaces are different by design, so PAWN rankings are compared per engine,
+not factor by factor.
 
 Kora has no cyclone-mortality pathway (a documented limitation of the published model, not a bug here --
 see `KoraInterface.jl/src/domain_translator.jl`), so its trajectories reflect DHW-only disturbance even
-when `CYCLONE_IDX` is set for the other engines.
+when `CYCLONE_IDX` is set for the other engines. CORSET by default ALSO ignores `DHW_IDX`/`CYCLONE_IDX`
+(`CORSET_USE_CYCLONES_AS_HURRICANES`/`CORSET_USE_DHW_AS_BLEACHING` default `false`) -- turning them on
+substitutes ADRIA's cyclone/DHW layers for CORSET's own hurricane/bleaching pulses, a modelling judgement
+call documented in `domain_translator.jl`'s header, not a validated equivalence between the two models'
+disturbance definitions. ReefMod has a real cyclone (and CoTS) pathway but it is switched OFF for this
+comparison (not wired to ADRIA's own cyclone forcing in this first pass -- see
+`ReefModInterface.jl/src/domain_translator.jl`), so its trajectories are also DHW-only disturbance.
+ReefMod's `:relative_shelter_volume` (and the Reef Condition/Tourism indices derived from it) are not yet
+computed (`:absolute_shelter_volume` only, see `ReefModInterface.jl/src/indicators.jl`); CORSET computes
+NONE of relative_juveniles/relative_shelter_volume/juvenile_indicator/reef_condition_index/
+reef_tourism_index at all, because none are defined without coral size structure (see
+`CORSETInterface.jl/src/indicators.jl`) -- the shelter-volume validity check in section 8 below omits
+both from those panels the same way it already handles any engine outside ADRIA's `[0, 1]` convention.
 
 CAUTION: PAWN needs N/S > 80 (see `ADRIAanalysis.sensitivity.pawn`), i.e. N_SAMPLES > 800 at S=10. At the
 default N_SAMPLES the PAWN panels are illustrative only.
@@ -60,8 +88,9 @@ haskey(ENV, "JULIA_PYTHONCALL_EXE") ||
 haskey(ENV, "CORALPOP_ENGINE_DIR") ||
     (ENV["CORALPOP_ENGINE_DIR"] = raw"C:\Users\vhaller\Documents\GitHub\CoralPop-Engine")
 
-const PROJECT_NAME = _cfg("PROJECT_NAME", "FourEngineComparison")          # output folder under ModelRuns/
+const PROJECT_NAME = _cfg("PROJECT_NAME", "SixEngineComparison")           # output folder under ModelRuns/
 const CSCAPE_PROJECT_NAME = _cfg("CSCAPE_PROJECT_NAME", "AdjustedRecruitment10_Disturbance")   # 06's project
+const REEFMOD_PROJECT_NAME = _cfg("REEFMOD_PROJECT_NAME", "ReefModHPCRun")   # ReefModInterface.jl HPC pipeline's REEFMOD_JOB_DIR basename
 
 ## An ADRIA domain package on disk, and the RCP -- keep identical to 06 (checked below for C~scape).
 const DOMAIN_PATH = _cfg("DOMAIN_PATH", raw"C:\Users\vhaller\Downloads\Moore_2025-08-22_v080")
@@ -79,20 +108,38 @@ const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) : (64, 1, 1)
 ## ADRIA.sample's default Sobol' sampler requires a power of 2.
 const N_SAMPLES = parse(Int, _cfg("N_SAMPLES", "8"))
 
-## :run = run it here; :load = reload what an earlier run of THIS script saved. C~scape: :load (from 06) or :skip.
+## :run = run it here; :load = reload what an earlier run of THIS script saved. C~scape/ReefMod: :load
+## (from 06 / the HPC pipeline) or :skip -- neither can ever be :run from this script, see the header.
 const CORALBLOX_MODE = Symbol(_cfg("CORALBLOX_MODE", "run"))
 const CORALPOP_MODE = Symbol(_cfg("CORALPOP_MODE", "run"))
 const KORA_MODE = Symbol(_cfg("KORA_MODE", "run"))
+const CORSET_MODE = Symbol(_cfg("CORSET_MODE", "run"))
 const CSCAPE_MODE = Symbol(_cfg("CSCAPE_MODE", "load"))
+const REEFMOD_MODE = Symbol(_cfg("REEFMOD_MODE", "load"))
 
 ## CoralPop parallelism: Distributed workers, each with its own Python interpreter (0 = this process).
 const CORALPOP_N_WORKERS = parse(Int, _cfg("CORALPOP_N_WORKERS", "2"))
-## Kora parallelism: a `Threads.@threads` cap, not separate processes (pure Julia) -- start this script
-## with `julia -t N` for a value above 1 to do anything.
+## Kora/CORSET parallelism: a `Threads.@threads` cap, not separate processes (pure Julia) -- start this
+## script with `julia -t N` for a value above 1 to do anything.
 const KORA_N_WORKERS = parse(Int, _cfg("KORA_N_WORKERS", "1"))
+const CORSET_N_WORKERS = parse(Int, _cfg("CORSET_N_WORKERS", "1"))
+
+## CORSET needs consumer (fish/urchin) biomass that no ADRIA domain carries at all -- see
+## `CORSETInterface.jl/src/domain_translator.jl`. These are PLACEHOLDER values (kg/km^2) for a
+## structural comparison, NOT survey data for the Moore domain or any other -- replace them with real
+## site data before drawing any conclusion from CORSET's absolute cover/biomass here.
+const CORSET_INITIAL_HERBIVORE_BIOMASS = parse(Float64, _cfg("CORSET_INITIAL_HERBIVORE_BIOMASS", "4.0e4"))
+const CORSET_INITIAL_SMALL_PISCIVORE_BIOMASS = parse(Float64, _cfg("CORSET_INITIAL_SMALL_PISCIVORE_BIOMASS", "4.0e3"))
+const CORSET_INITIAL_LARGE_PISCIVORE_BIOMASS = parse(Float64, _cfg("CORSET_INITIAL_LARGE_PISCIVORE_BIOMASS", "1.0e3"))
+const CORSET_INITIAL_URCHIN_BIOMASS = parse(Float64, _cfg("CORSET_INITIAL_URCHIN_BIOMASS", "1.0e4"))
+## Off by default -- see the header's note on substituting ADRIA's cyclone/DHW layers for CORSET's own
+## hurricane/bleaching pulses.
+const CORSET_USE_CYCLONES_AS_HURRICANES = _cfg("CORSET_USE_CYCLONES_AS_HURRICANES", "false") == "true"
+const CORSET_USE_DHW_AS_BLEACHING = _cfg("CORSET_USE_DHW_AS_BLEACHING", "false") == "true"
 
 for (n, m, ok) in (("CORALBLOX_MODE", CORALBLOX_MODE, (:run, :load)), ("CORALPOP_MODE", CORALPOP_MODE, (:run, :load)),
-    ("KORA_MODE", KORA_MODE, (:run, :load)), ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)))
+    ("KORA_MODE", KORA_MODE, (:run, :load)), ("CORSET_MODE", CORSET_MODE, (:run, :load)),
+    ("CSCAPE_MODE", CSCAPE_MODE, (:load, :skip)), ("REEFMOD_MODE", REEFMOD_MODE, (:load, :skip)))
     m in ok || error("$n must be one of $ok, got :$m")
 end
 
@@ -100,7 +147,8 @@ end
 # Packages
 # =============================================================================
 
-using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, DataFrames, Statistics, Printf
+using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface,
+      DataFrames, Statistics, Printf
 using ADRIAanalysis
 ## ADRIAviz's Makie extension needs ADRIAviz + Makie/GeoMakie/GraphMakie loaded; CairoMakie (a pure
 ## software rasteriser) rather than WGLMakie because this is a headless script writing PNGs. `import`, not
@@ -316,8 +364,96 @@ if CSCAPE_MODE === :load
         push!(engines, EngineRun(:cscape, "C~scape", "#D55E00", rs_cs,
             DataFrames.select(cs_samples["sampled_cs"], cs_varying), CscapeInterface.CSCAPE_FUNCTIONAL_TYPES))
     else
-        @warn "C~scape results not found -- continuing with CoralBlox and CoralPop only. " *
+        @warn "C~scape results not found -- continuing without it. " *
               "Run 06_RUNNING_A_NEW_PROJECT.jl first (it writes my_run.jld2 and samples.jld2)." CS_DIR
+    end
+end
+
+# =============================================================================
+# 6. CORSET -- through ADRIA's own entry point
+# =============================================================================
+# `:corset` is provided by the ADRIACORSETExt extension (active because CORSETInterface is loaded).
+# CORSET is pure Julia (no Python bridge) like Kora, but unlike Kora/CoralPop/C~scape it has no coral
+# size structure and no fish/urchin/benthic state an ADRIA domain carries at all -- the
+# `CORSET_INITIAL_*_BIOMASS` CONFIG constants above are REQUIRED placeholders, not domain-derived.
+# See `CORSETInterface.jl/src/domain_translator.jl`'s file header before trusting this section's
+# absolute output.
+
+const CORSET_RESULT_FILE = joinpath(FPATH, "corset_result.jld2")
+
+if CORSET_MODE === :run
+    corset_spec_ = corset_spec(; rcp=parse(Int, RCP), year_start=first(YEARS), year_end=last(YEARS))
+    scens_corset = ADRIA.sample(corset_spec_, N_SAMPLES)
+    corset_dir = joinpath(FPATH, "corset")
+    try
+        rm(corset_dir; force=true, recursive=true)
+    catch err
+        @warn "Could not clear the previous CORSET output folder (OneDrive may be syncing it); continuing" corset_dir exception = err
+    end
+    rs_corset = ADRIA.run_scenarios(
+        dom, scens_corset, RCP, :corset;
+        corset_fpath=corset_dir, dhw_idx=DHW_IDX, wave_idx=WAVE_IDX, cyclone_idx=CYCLONE_IDX,
+        n_workers=CORSET_N_WORKERS, spec=corset_spec_,
+        translator_kwargs=(;
+            initial_herbivore_biomass=CORSET_INITIAL_HERBIVORE_BIOMASS,
+            initial_small_piscivore_biomass=CORSET_INITIAL_SMALL_PISCIVORE_BIOMASS,
+            initial_large_piscivore_biomass=CORSET_INITIAL_LARGE_PISCIVORE_BIOMASS,
+            initial_urchin_biomass=CORSET_INITIAL_URCHIN_BIOMASS,
+            use_cyclones_as_hurricanes=CORSET_USE_CYCLONES_AS_HURRICANES,
+            use_dhw_as_bleaching=CORSET_USE_DHW_AS_BLEACHING
+        )
+    )
+    save_corset_results(rs_corset, CORSET_RESULT_FILE)
+    corset_varying = corset_spec_.fieldname[.!corset_spec_.is_constant]
+    JLD2.save(SAMPLES_FILE, merge(JLD2.load(SAMPLES_FILE),
+        Dict("scens_corset" => scens_corset, "corset_varying" => String.(corset_varying))))
+else
+    isfile(CORSET_RESULT_FILE) || error("CORSET_MODE=:load but no earlier run saved at $CORSET_RESULT_FILE")
+    rs_corset = load_corset_results(CORSET_RESULT_FILE)
+    corset_varying = Symbol.(JLD2.load(SAMPLES_FILE)["corset_varying"])
+end
+push!(engines, EngineRun(:corset, "CORSET", "#E69F00", rs_corset,
+    DataFrames.select(rs_corset.inputs, corset_varying), CORSET_GROUPS))
+
+# =============================================================================
+# 7. ReefMod -- loaded from the HPC pipeline's saved result
+# =============================================================================
+# Produced entirely on the HPC by ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh (ADRIA sampling
+# through to the saved result set -- see that package's README for why there is no `:reefmod` ADRIA
+# engine to run inline here, the same reasoning as C~scape above). `job_meta.jld2` records the settings
+# the HPC pipeline's Stage A used; `reefmod_result.jld2` is the saved `ReefModResultSet`. Both must be
+# scp'd back into `ModelRuns/<REEFMOD_PROJECT_NAME>/` from the HPC's `$REEFMOD_JOB_DIR`.
+
+const RM_DIR = joinpath(MODEL_RUNS_DIR, REEFMOD_PROJECT_NAME)
+const RM_RESULT_FILE = joinpath(RM_DIR, "reefmod_result.jld2")
+const RM_META_FILE = joinpath(RM_DIR, "job_meta.jld2")
+
+if REEFMOD_MODE === :load
+    if isfile(RM_RESULT_FILE) && isfile(RM_META_FILE)
+        rm_meta = JLD2.load(RM_META_FILE)
+
+        ## The comparison is only meaningful if the HPC pipeline used the same settings as this script.
+        cfg = Dict{String,Any}(
+            "DOMAIN_PATH" => DOMAIN_PATH, "RCP" => RCP, "DHW_IDX" => DHW_IDX,
+            "YEAR_START" => first(YEARS), "YEAR_END" => last(YEARS)
+        )
+        mismatch = [k for (k, v) in cfg if get(rm_meta["fairness"], k, missing) != v]
+        isempty(mismatch) || error(
+            "The ReefMod HPC run (", RM_DIR, ") used different settings than this script for: ",
+            join(["$k (HPC: $(get(rm_meta["fairness"], k, missing)), 07: $(cfg[k]))" for k in mismatch], "; "),
+            ". Re-run the HPC pipeline with matching settings or change this script's CONFIG."
+        )
+
+        rs_rm = load_reefmod_results(RM_RESULT_FILE)
+        rm_spec_disk = rm_meta["spec"]
+        rm_varying = rm_spec_disk === nothing ? Symbol.(filter(!=("ID"), names(rm_meta["scenarios"]))) :
+                     rm_spec_disk.fieldname[.!rm_spec_disk.is_constant]
+        push!(engines, EngineRun(:reefmod, "ReefMod", "#56B4E9", rs_rm,
+            DataFrames.select(rm_meta["scenarios"], rm_varying), REEFMOD_GROUPS))
+    else
+        @warn "ReefMod results not found -- continuing without it. " *
+              "Run ReefModInterface.jl/jobs/submit_reefmod_pipeline.sh on the HPC first, then scp back " *
+              "reefmod_result.jld2 and job_meta.jld2." RM_DIR
     end
 end
 
@@ -331,7 +467,7 @@ end
 @info "Engines in the comparison" labels = [e.label for e in engines] n_scenarios = [ADRIA.n_scenarios(e.rs) for e in engines]
 
 # =============================================================================
-# 6. The same ADRIA metrics for every engine
+# 8. The same ADRIA metrics for every engine
 # =============================================================================
 
 "k-area weighted domain mean of a `[timesteps, locations, scenarios]` metric -> `[timesteps, scenarios]`."
@@ -352,25 +488,40 @@ const METRICS = [
     (:reef_tourism_index, "Reef Tourism Index", M.reef_tourism_index),
 ]
 
-## domain[engine][metric] = [timesteps, scenarios]
+## domain[engine][metric] = [timesteps, scenarios], or `missing` when the engine's result set doesn't
+## have that outcome at all -- ReefMod's indicators are a first pass (see ReefModInterface.jl/README.md's
+## Status table): it has :relative_cover/:relative_taxa_cover/:absolute_shelter_volume and (sometimes)
+## :relative_juveniles, but not yet :relative_shelter_volume/:juvenile_indicator/:reef_condition_index/
+## :reef_tourism_index. Every other engine computes all six through ADRIAIndicators and is unaffected;
+## this `try`/`catch` only ever fires for an engine with a genuinely incomplete `outcomes` dict.
 domain = Dict(
-    e.key => Dict(name => domain_mean(Array(f(e.rs)), e.rs) for (name, _, f) in METRICS) for e in engines
+    e.key => Dict(name => try
+        domain_mean(Array(f(e.rs)), e.rs)
+    catch err
+        err isa Union{KeyError,MethodError} || rethrow()
+        missing
+    end for (name, _, f) in METRICS) for e in engines
 )
 
-## --- validity check: relative shelter volume is defined on [0, 1] ---
+## --- validity check: relative shelter volume is defined on [0, 1] (and must exist at all) ---
 ## Wrapping a result set in ADRIA's metric function only re-labels what the engine stored; each engine computed its
 ## own shelter volume. ADRIA's current definition (used for CoralBlox, and followed by CoralPop) normalises against a
-## 95 cm tabular Acropora and clamps to [0, 1]. An engine whose stored values fall outside [0, 1] used a different
-## normalisation, and everything built on shelter volume (the Reef Condition and Tourism indices) inherits that. Plotting
-## such an engine next to the others would be misleading, so it is left out of those panels -- with a warning -- unless
-## you set INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME. Nothing is changed in the engines' own results.
+## 95 cm tabular Acropora and clamps to [0, 1]. An engine whose stored values fall outside [0, 1] (or doesn't have
+## them at all, e.g. ReefMod so far) used a different normalisation, and everything built on shelter volume (the
+## Reef Condition and Tourism indices) inherits that. Plotting such an engine next to the others would be misleading,
+## so it is left out of those panels -- with a warning -- unless you set INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME.
+## Nothing is changed in the engines' own results.
 const SHELTER_DEPENDENT = (:relative_shelter_volume, :reef_condition_index, :reef_tourism_index)
 const INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME = _cfg("INCLUDE_INVALID_SHELTER", "false") == "true"
 
 invalid_shelter = Set{Symbol}()
 for e in engines
-    rsv = Array(M.relative_shelter_volume(e.rs))
-    if maximum(rsv) > 1 + 1e-9
+    rsv = domain[e.key][:relative_shelter_volume]
+    if rsv === missing
+        push!(invalid_shelter, e.key)
+        @warn "$(e.label): no :relative_shelter_volume outcome at all. Its shelter volume and the Reef " *
+              "Condition / Reef Tourism indices derived from it are omitted from those panels."
+    elseif maximum(rsv) > 1 + 1e-9
         push!(invalid_shelter, e.key)
         @warn "$(e.label): relative shelter volume reaches $(round(maximum(rsv); sigdigits=3)) " *
               "($(round(100 * count(>(1 + 1e-9), rsv) / length(rsv); digits=1))% of values > 1), outside its defined range [0, 1]. " *
@@ -381,31 +532,36 @@ for e in engines
 end
 ## --- stale-result check: the C~scape juvenile-indicator units bug ---
 ## Before the fix in CscapeInterface (commit 0786416) the juvenile indicator was exactly 1e4 x too small (~1e-5),
-## so a result saved by an older 06 shows juveniles but a juvenile indicator that is essentially zero.
+## so a result saved by an older 06 shows juveniles but a juvenile indicator that is essentially zero. Skipped for
+## any engine missing :relative_juveniles/:juvenile_indicator entirely (the `domain[...] === missing` case already
+## keeps it out of those panels via `plottable`, no separate warning needed here).
 for e in engines
-    rel_juv = maximum(Array(M.relative_juveniles(e.rs)))
-    juv_ind = maximum(Array(M.juvenile_indicator(e.rs)))
-    if rel_juv > 1e-2 && juv_ind < 1e-3
-        @warn "$(e.label): juvenile indicator is ~0 (max $(round(juv_ind; sigdigits=2))) although relative juveniles reach " *
-              "$(round(rel_juv; sigdigits=2)). This looks like a result saved before the juvenile-indicator units fix. " *
+    rel_juv, juv_ind = domain[e.key][:relative_juveniles], domain[e.key][:juvenile_indicator]
+    (rel_juv === missing || juv_ind === missing) && continue
+    if maximum(rel_juv) > 1e-2 && maximum(juv_ind) < 1e-3
+        @warn "$(e.label): juvenile indicator is ~0 (max $(round(maximum(juv_ind); sigdigits=2))) although relative juveniles reach " *
+              "$(round(maximum(rel_juv); sigdigits=2)). This looks like a result saved before the juvenile-indicator units fix. " *
               "Re-run 06, or repair its indicator files with CscapeInterface.fix_juvenile_indicators(\"<project>/adria_exports\") and " *
               "reload/save the result set. The juvenile indicator and stored Reef Condition Index for this engine are unreliable."
     end
 end
 
 "Is `e`'s `metric` fit to plot beside the other engines?"
-plottable(e, metric) = INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME || !(metric in SHELTER_DEPENDENT && e.key in invalid_shelter)
+function plottable(e, metric)
+    domain[e.key][metric] === missing && return false
+    return INCLUDE_ENGINES_WITH_INVALID_SHELTER_VOLUME || !(metric in SHELTER_DEPENDENT && e.key in invalid_shelter)
+end
 
 # =============================================================================
-# 7. Figures
+# 9. Figures
 # =============================================================================
 
-## --- 7.1 all engines, one panel per metric: mean over scenarios with a min-max band ---
+## --- 9.1 all engines, one panel per metric: mean over scenarios with a min-max band ---
 fig_cmp = CairoMakie.Figure(; size=(1300, 750))
 for (i, (name, title, _)) in enumerate(METRICS)
     omitted = [e.label for e in engines if !plottable(e, name)]
     ax = CairoMakie.Axis(fig_cmp[fld1(i, 3), mod1(i, 3)];
-        title=isempty(omitted) ? title : "$title\n($(join(omitted, ", ")) omitted: shelter volume outside [0, 1])",
+        title=isempty(omitted) ? title : "$title\n($(join(omitted, ", ")) omitted: not available or outside [0, 1])",
         titlesize=isempty(omitted) ? 16 : 13, xlabel="Year")
     for e in engines
         plottable(e, name) || continue
@@ -419,7 +575,7 @@ end
 CairoMakie.Label(fig_cmp[0, :], "Domain-mean metrics, mean and min-max over $(N_SAMPLES) sampled scenarios per engine"; fontsize=18)
 CairoMakie.save(joinpath(IMAGES_DIR, "compare_metrics.png"), fig_cmp; px_per_unit=3)
 
-## --- 7.2 each engine through ADRIA's own scenario plot ---
+## --- 9.2 each engine through ADRIA's own scenario plot ---
 for e in engines
     dc = ADRIA.DataCube(domain[e.key][:relative_cover]; timesteps=YEARS, scenarios=1:ADRIA.n_scenarios(e.rs))
     fig = if "guided" in names(e.rs.inputs)
@@ -436,9 +592,10 @@ for e in engines
     CairoMakie.save(joinpath(IMAGES_DIR, "trajectories_$(e.key).png"), fig; px_per_unit=3)
 end
 
-## --- 7.3 taxa cover, each engine keeping its own functional groups ---
-## CoralBlox and Kora use ADRIA's own 5 groups and need no special-casing; CoralPop keeps its own 3
-## morphologies (series labels only); C~scape's `:species` axis needs the dedicated workaround below.
+## --- 9.3 taxa cover, each engine keeping its own functional groups ---
+## CoralBlox and Kora use ADRIA's own 5 groups and need no special-casing; CoralPop, ReefMod and
+## CORSET keep their own 3/6/2 groups (series labels only); C~scape's `:species` axis needs the
+## workaround below.
 for e in engines
     fig = if e.key === :cscape
         ## `relative_taxa_cover`'s Metric wrapper fails on CScapeResultSet's `:species` axis; use the plain
@@ -448,7 +605,7 @@ for e in engines
         g = f[1, 1] = CairoMakie.GridLayout()
         ADRIA.viz.taxonomy!(g, taxa, Dict(:CScape => trues(ADRIA.n_scenarios(e.rs))); series_opts=Dict(:labels => e.groups))
         f
-    elseif e.key === :coralpop
+    elseif e.key === :coralpop || e.key === :reefmod || e.key === :corset
         ADRIA.viz.taxonomy(e.rs.inputs, M.relative_taxa_cover(e.rs); series_opts=Dict(:labels => e.groups))
     else
         ADRIA.viz.taxonomy(e.rs.inputs, M.relative_taxa_cover(e.rs))
@@ -457,7 +614,7 @@ for e in engines
 end
 
 # =============================================================================
-# 8. PAWN sensitivity of final-year cover to each engine's own factors
+# 10. PAWN sensitivity of final-year cover to each engine's own factors
 # =============================================================================
 ## `S` scaled down from N_SAMPLES so slicing doesn't degenerate; this does NOT fix the small-sample bias
 ## (see the CAUTION in the header).
@@ -475,7 +632,7 @@ for e in engines
 end
 
 # =============================================================================
-# 9. Summary table
+# 11. Summary table
 # =============================================================================
 
 rows = NamedTuple[]

@@ -11,6 +11,8 @@ ADRIA = "7dc409a7-fbe5-4c9d-b3e2-b0c19a6ba600"
 ADRIAIndicators = "05ad51df-066f-4748-8c47-f6b67db83211"
 ADRIAanalysis = "bc4d0ea8-6565-4397-854d-28474bf8c6b3"
 ADRIAviz = "a7bb1955-b5ed-4954-ba3d-ac9734139a95"
+CORSET = "3b1f6e9a-6a6a-4c2d-9f0a-7c2a1d7e4b10"
+CORSETInterface = "7d4f2c8e-9b1a-4e3f-8c5d-2a9b6e1f3d47"
 CScape = "a9cf4493-63b1-4baa-9378-c4395a88e333"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CoralPopInterface = "8b521de6-7b98-4e38-9776-d64b026254f7"
@@ -24,6 +26,7 @@ JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 Kora = "63f594c6-e77c-4cfd-819e-df68f57e9897"
 KoraInterface = "f2396b7f-ab6b-447e-a8d8-68bf8c91238a"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+ReefModInterface = "e768d920-e017-4495-9ed9-e8b3381c2bcf"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 XLSX = "fdbf4ff8-1666-58a4-91e7-1b58723a45e0"
 YAXArrays = "c21b50f5-aa40-41ea-b809-c0f5e47bfa5c"
@@ -33,11 +36,14 @@ ADRIA = {path = "../../../../Documents/GitHub/ADRIA.jl/ADRIA"}
 ADRIAIndicators = {path = "../../../../Documents/GitHub/ADRIAIndicators.jl"}
 ADRIAanalysis = {path = "../../../../Documents/GitHub/ADRIA.jl/ADRIAanalysis"}
 ADRIAviz = {path = "../../../../Documents/GitHub/ADRIA.jl/ADRIAviz"}
+CORSET = {path = "../../../../Documents/GitHub/CORSET.jl"}
+CORSETInterface = {path = "../../../../Documents/GitHub/CORSETInterface.jl"}
 CScape = {path = "../../../../Documents/GitHub/CScape.jl"}
 CoralPopInterface = {path = "../../../../Documents/GitHub/CoralPopInterface.jl"}
 CscapeInterface = {path = "../../../../Documents/GitHub/CscapeInterface.jl"}
 Kora = {path = "../../../../Documents/GitHub/Kora.jl"}
 KoraInterface = {path = "../../../../Documents/GitHub/KoraInterface.jl"}
+ReefModInterface = {path = "../../../../Documents/GitHub/ReefModInterface.jl"}
 
 [compat]
 julia = "1.12"
