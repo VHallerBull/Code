@@ -129,11 +129,14 @@ The image contains a **copy** of the local clones, so build only from code you'r
 4. **Optional local smoke test** (no MATLAB needed, about 30-60 min, mostly Kora). Do this before
    spending an hour on the build:
    ```powershell
-   $env:CMR_PROJECT_NAME="LocalSmoke"; $env:CMR_N_SAMPLES="2"
+   $env:CMR_MODEL_RUNS_DIR="C:\Users\vhaller\cmrsmoke"; $env:CMR_PROJECT_NAME="S"; $env:CMR_N_SAMPLES="2"
    foreach ($e in "coralblox","corset","coralpop","cscape","kora") { julia +release --project=. 08_RUN_ENGINE.jl $e }
    julia +release --project=. 09_ANALYSE_SIX_ENGINES.jl
    ```
-   Then look at `ModelRuns\LocalSmoke\FIGURES.md`.
+   Then look at `C:\Users\vhaller\cmrsmoke\S\FIGURES.md`. Keep the output folder **short and outside
+   OneDrive**: Kora's and C~scape's output file names are long, so a deep folder breaks Windows' 260-character
+   path limit (the run then fails while saving), and OneDrive locks freshly written files. A smoke test from
+   2026-10-02 is kept in `ModelRuns/LocalSmoke_TestDomain_N2/` as a preview of the figures.
 
 ---
 
@@ -435,6 +438,7 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 | 09: "were run with different settings" | Two engines in one project were run with different `CMR_*` settings. Re-run the odd one out, or use separate projects. |
 | A figure missing from `images/` | It failed. `FIGURES.md` lists failed figures with the error, and the other figures are still written. |
 | `DHW_IDX=... is outside this domain's 1:50 DHW members` | The Test domain has 50 members (the Moore domain's 64 does not exist here). |
+| Laptop only: `SystemError: opening file ...` while an engine saves | Windows' 260-character path limit: use a short `CMR_MODEL_RUNS_DIR` (see 3.4). |
 
 ---
 
