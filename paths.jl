@@ -14,8 +14,10 @@ const CODE_DIR = @__DIR__
 """
 Root output folder for model runs: `CoralModelReview/ModelRuns`, next to `Code/`. Each script writes to its
 own sub-folder (`model_run_dir("SomeProject")`). Kept outside `Code/` so large outputs never end up in git.
+`ENV["CMR_MODEL_RUNS_DIR"]` overrides it -- the HPC jobs point it at a writable folder outside the
+(read-only) container image, see `hpc/RUNNING_ON_HPC.md`.
 """
-const MODEL_RUNS_DIR = normpath(joinpath(CODE_DIR, "..", "ModelRuns"))
+const MODEL_RUNS_DIR = normpath(get(ENV, "CMR_MODEL_RUNS_DIR", joinpath(CODE_DIR, "..", "ModelRuns")))
 
 """
     model_run_dir(name) -> String

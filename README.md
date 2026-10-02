@@ -18,6 +18,10 @@ CoralModelReview/
 |---|---|
 | `06_RUNNING_A_NEW_PROJECT.jl` / `.md` | CoralBlox vs C~scape from a data folder to plots. Produces the C~scape results 07 reuses. |
 | `07_COMPARE_SIX_ENGINES.jl` | CoralBlox vs C~scape vs CoralPop vs Kora vs ReefMod vs CORSET: same domain and climate member, ADRIA's sampler and metrics for all six, PAWN per engine. |
+| `engines.jl` | The per-engine code shared by 08 and 09 (factor specs, run calls, save/load, size structure, benchmark helpers), lifted from 06/07. |
+| `08_RUN_ENGINE.jl <engine>` | Runs ONE engine into `ModelRuns/<project>/<engine>/` with benchmarks -- one HPC job per engine. Defaults: ADRIA Test domain, DHW/wave member 40/16, 8 scenarios. |
+| `09_ANALYSE_SIX_ENGINES.jl` | The full comparison of whatever 08 produced: figures A-K (sanity, domain metrics, taxa, size structure, disturbance response, spatial, agreement, sensitivity, CORSET extras, benchmarks), `summary.csv`, `FIGURES.md`. |
+| `hpc/` | The Apptainer image and Slurm jobs for running all six engines on the AIMS HPC -- start with **`hpc/RUNNING_ON_HPC.md`**. |
 | `paths.jl` | Shared locations (`MODEL_RUNS_DIR`, `model_run_dir(name)`); `include` it from every script. |
 | `Project.toml`, `Manifest.toml` | The Julia environment. |
 | `setup_environment.jl` | Checks the local package clones exist, instantiates the environment. |
@@ -31,6 +35,15 @@ julia --project=. setup_environment.jl            # once, or after a fresh clone
 julia --project=. 06_RUNNING_A_NEW_PROJECT.jl     # slow: runs C~scape (needs R/brms only if demography isn't already converted)
 julia --project=. 07_COMPARE_SIX_ENGINES.jl       # loads 06's C~scape result and the ReefMod HPC pipeline's
                                                    # result; runs CoralBlox, CoralPop, Kora and CORSET here
+```
+
+**On the HPC (all six engines, including ReefMod):** `08`/`09` inside one Apptainer image, one Slurm job per
+engine plus an analysis job -- see `hpc/RUNNING_ON_HPC.md` for building, uploading and running, in order.
+Locally, `08`/`09` run the same way for every engine except ReefMod (no MATLAB here):
+
+```bash
+julia +release --project=. 08_RUN_ENGINE.jl kora          # one engine (CMR_N_SAMPLES=2 for a quick test)
+julia +release --project=. 09_ANALYSE_SIX_ENGINES.jl      # compare whatever has been run
 ```
 
 ReefMod has no local MATLAB license, so it isn't run by this environment at all: its whole pipeline

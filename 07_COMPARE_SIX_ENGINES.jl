@@ -106,13 +106,16 @@ const DOMAIN_PATH = _cfg("DOMAIN_PATH", raw"C:\Users\vhaller\Downloads\Moore_202
 const RCP = _cfg("RCP", "45")
 
 ## CoralBlox calibration (`calibrated_params.nc`) or `nothing` for ADRIA's defaults -- keep identical to 06.
-const CORALBLOX_CALIBRATION_OVERRIDES_PATH = "C:\\Users\\vhaller\\Australian Institute of Marine Science\\AIMS Decision Support - General\\01_PROJECTS\\RRAP M&DS\\ADRIA\\ADRIA Domain data\\CoralBlox-ADRIA GBR Calibrated Parameters\\2026-08-11\\calibrated_params.nc"
+const CORALBLOX_CALIBRATION_OVERRIDES_PATH = _cfg("CALIBRATION_PATH", "C:\\Users\\vhaller\\Australian Institute of Marine Science\\AIMS Decision Support - General\\01_PROJECTS\\RRAP M&DS\\ADRIA\\ADRIA Domain data\\CoralBlox-ADRIA GBR Calibrated Parameters\\2026-08-11\\calibrated_params.nc")
 
 ## Turn off DHW/wave/cyclone forcing (intrinsic dynamics only) -- keep identical to 06.
 const NO_DISTURBANCE = _cfg("NO_DISTURBANCE", "false") == "true"
 ## The single climate member all engines share (see 06 for why 64: draw 1 is a near-worst-case DHW draw).
 ## WAVE_IDX must stay 1 for the Moore domain (its wave_scens has one all-zero member); CoralPop ignores it.
-const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) : (64, 1, 1)
+## `CMR_DHW_IDX`/`CMR_WAVE_IDX`/`CMR_CYCLONE_IDX` override the members (e.g. 40/16/1, the ADRIA Test
+## domain's median-severity DHW and wave members -- see engines.jl).
+const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) :
+    parse.(Int, (_cfg("DHW_IDX", "64"), _cfg("WAVE_IDX", "1"), _cfg("CYCLONE_IDX", "1")))
 
 ## ADRIA.sample's default Sobol' sampler requires a power of 2.
 const N_SAMPLES = parse(Int, _cfg("N_SAMPLES", "8"))
