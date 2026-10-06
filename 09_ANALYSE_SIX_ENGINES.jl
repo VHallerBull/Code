@@ -895,13 +895,19 @@ corset_switch(name) = corset !== nothing && get(engines[corset].settings, name, 
 const CORSET_DHW = corset_switch("CORSET_USE_DHW_AS_BLEACHING") ?
     "on: each year with site-mean DHW > 4 is one fixed-severity bleaching event" : "off (CORSET_USE_DHW_AS_BLEACHING)"
 const CORSET_CYC = corset_switch("CORSET_USE_CYCLONES_AS_HURRICANES") ? "on" : "off (CORSET_USE_CYCLONES_AS_HURRICANES)"
+## Where CoralPop's and Kora's larvae came from (CMR_LARVAE_VIA_CONNECTIVITY, as each run recorded it).
+via_matrix(key) = (i = findfirst(e -> e.key === key, engines);
+    i !== nothing && get(engines[i].settings, "LARVAE_VIA_CONNECTIVITY", false) === true)
+const CORALPOP_LARVAE = via_matrix(:coralpop) ? "all spawner larvae via the matrix (own retention off)" :
+    "between sites via the matrix; own larvae via CoralPop's retention"
+const KORA_LARVAE = via_matrix(:kora) ? "all larvae via the matrix (self_seed off)" : "none: closed, self-seeding sites"
 
 ## Which processes each engine represents in THIS comparison (from 07's header and the interfaces).
 const CAPABILITIES = [
     ("CoralBlox", "5 ADRIA groups x 7", "yes", "yes", "yes", "yes"),
     ("C~scape", "6 types, 100 IPM classes", "yes", "yes", "yes", "yes"),
-    ("CoralPop", "3 morphologies x bins", "yes", "yes", "yes (via domain)", "yes"),
-    ("Kora", "5 ADRIA groups x 7", "no", "yes", "no (no cyclone pathway)", "yes"),
+    ("CoralPop", "3 morphologies x bins", CORALPOP_LARVAE, "yes", "yes (via domain)", "yes"),
+    ("Kora", "5 ADRIA groups x 7", KORA_LARVAE, "yes", "no (no cyclone pathway)", "yes"),
     ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no"),
     ("ReefMod", "6 groups, 11 bins (counts)", "no", "yes", "switched off", "provisional"),
 ]
@@ -918,6 +924,7 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "- With few scenarios per engine, spreads and every sensitivity figure are illustrative only.$(SA_NOTE)")
     println(io, "- C~scape stores its initial state one year earlier; its first compared year has had one year of dynamics (see 07).")
     println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off. CORSET heat stress: $CORSET_DHW; cyclones: $CORSET_CYC. The Test domain's cyclone data is all zero anyway.")
+    println(io, "- Larval supply: CoralBlox and C~scape take larvae only from the domain's connectivity matrix (C~scape's brooders also retain locally). CoralPop: $CORALPOP_LARVAE. Kora: $KORA_LARVAE. Sites the matrix does not supply get no recruits from matrix-only engines.")
     println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")

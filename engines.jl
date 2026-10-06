@@ -99,6 +99,9 @@ function engine_config()
         corset_urchin=parse(Float64, _cfg("CORSET_INITIAL_URCHIN_BIOMASS", "1.0e4")),
         corset_use_cyclones=_cfg("CORSET_USE_CYCLONES_AS_HURRICANES", "false") == "true",
         corset_use_dhw=_cfg("CORSET_USE_DHW_AS_BLEACHING", "false") == "true",
+        ## true: CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own
+        ## through the diagonal), as CoralBlox and C~scape do, instead of their own retention/self-seeding.
+        larvae_via_connectivity=_cfg("LARVAE_VIA_CONNECTIVITY", "false") == "true",
     )
 end
 
@@ -112,6 +115,7 @@ function settings_dict(cfg, years)::Dict{String,Any}
         "N_WORKERS" => cfg.n_workers, "THREADS" => Threads.nthreads(),
         "CORSET_USE_DHW_AS_BLEACHING" => cfg.corset_use_dhw,
         "CORSET_USE_CYCLONES_AS_HURRICANES" => cfg.corset_use_cyclones,
+        "LARVAE_VIA_CONNECTIVITY" => cfg.larvae_via_connectivity,
         "HOST" => gethostname(), "DATE" => string(now()),
     )
 end
@@ -271,11 +275,11 @@ function run_engine(key::Symbol, dom, dom_fixed, scens::DataFrame, spec, out::Ab
     elseif key === :coralpop
         return ADRIA.run_scenarios(dom, scens, cfg.rcp, :coralpop;
             coralpop_fpath=out, dhw_idx=cfg.dhw_idx, wave_idx=cfg.wave_idx, cyclone_idx=cfg.cyclone_idx,
-            n_workers=cfg.n_workers, spec, keep_raw=true)
+            n_workers=cfg.n_workers, spec, keep_raw=true, larvae_via_connectivity=cfg.larvae_via_connectivity)
     elseif key === :kora
         return ADRIA.run_scenarios(dom, scens, cfg.rcp, :kora;
             kora_fpath=out, dhw_idx=cfg.dhw_idx, wave_idx=cfg.wave_idx, cyclone_idx=cfg.cyclone_idx,
-            n_workers=cfg.n_workers, spec, keep_raw=true)
+            n_workers=cfg.n_workers, spec, keep_raw=true, larvae_via_connectivity=cfg.larvae_via_connectivity)
     elseif key === :corset
         return ADRIA.run_scenarios(dom, scens, cfg.rcp, :corset;
             corset_fpath=out, dhw_idx=cfg.dhw_idx, wave_idx=cfg.wave_idx, cyclone_idx=cfg.cyclone_idx,

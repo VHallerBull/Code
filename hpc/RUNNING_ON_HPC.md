@@ -395,6 +395,7 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 | `CMR_RCP` | `45` | |
 | `CMR_DHW_IDX` / `CMR_WAVE_IDX` / `CMR_CYCLONE_IDX` | `40` / `16` / `1` | the climate member all engines share |
 | `CMR_NO_DISTURBANCE` | `false` | `true` = no heat stress and no cyclones for every engine (DHW and cyclone member 0); the wave member stays, as it only sets C~scape's site wave exposure. Use its own project name. **Not for ReefMod yet**: its bridge stops with "Needs dhw_idx > 0", so add `--engines "coralblox cscape coralpop kora corset"` |
+| `CMR_LARVAE_VIA_CONNECTIVITY` | `false` | `true` = CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own via the diagonal), like CoralBlox and C~scape, instead of CoralPop's own retention / Kora's self-seeding. Use its own project name |
 | `CMR_N_SAMPLES` | `8` | scenarios per engine (power of 2) |
 | `CMR_SEED` | `1234` | seed for ADRIA's scrambled Sobol' sampler |
 | `CMR_N_WORKERS` | `0` | parallelism; its meaning differs per engine (CoralPop/C~scape: Distributed workers; Kora/CORSET: thread cap, needs more CPUs; ReefMod: concurrent MATLABs) |
