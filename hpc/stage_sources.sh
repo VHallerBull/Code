@@ -35,7 +35,7 @@ REPOS=(ADRIA.jl ADRIAIndicators.jl CScape.jl CscapeInterface.jl CoralPopInterfac
 
 # Never copied into the image. ReefModInterface keeps its (tiny) sandbox: the fallback ReefMod route
 # runs its 02_prepare_hpc_job.jl / 03_load_hpc_results.jl.
-EXCLUDES=(--exclude=.git/ --exclude=.vscode/ --exclude=Outputs/ --exclude=docs/ --exclude=data-raw/
+EXCLUDES=(--exclude=.git/ --exclude=.claude/ --exclude=.vscode/ --exclude=Outputs/ --exclude=docs/ --exclude=data-raw/
           --exclude='*.pptx' --exclude='*.ipynb' --exclude='*.docx' --exclude=__pycache__/)
 
 # Windows git sees these clones exactly as you do (line endings, file modes); WSL's git may not.
