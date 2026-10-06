@@ -35,7 +35,8 @@ echo "Build took $(( ($(date +%s) - start) / 60 )) min"
 echo "Testing the image"
 apptainer test "$SIF"
 
-sha256sum "$SIF" | tee "$SIF.sha256"
+# File name only (no directory), so `sha256sum -c` also works next to the uploaded copy on the HPC.
+(cd "$(dirname "$SIF")" && sha256sum "$(basename "$SIF")") | tee "$SIF.sha256"
 cp -f "$BUILD_DIR/coral/STAGED_SOURCES.md" "$BUILD_DIR/upload/STAGED_SOURCES.md"
 ls -lh "$SIF"
 
