@@ -116,6 +116,7 @@ function settings_dict(cfg, years)::Dict{String,Any}
         "CORSET_USE_DHW_AS_BLEACHING" => cfg.corset_use_dhw,
         "CORSET_USE_CYCLONES_AS_HURRICANES" => cfg.corset_use_cyclones,
         "LARVAE_VIA_CONNECTIVITY" => cfg.larvae_via_connectivity,
+        "CORALPOP_MORPH_GROUPS" => string(CORALPOP_MORPH_ADRIA_GROUPS),
         "HOST" => gethostname(), "DATE" => string(now()),
     )
 end

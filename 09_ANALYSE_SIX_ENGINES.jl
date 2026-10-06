@@ -358,12 +358,22 @@ figure("D_taxa", "taxa_native", "Each engine's cover by its OWN functional group
     fig
 end
 
+## CoralPop's morphology -> ADRIA group mapping as its run recorded it; results from before it was
+## recorded (2026-10-07) used [[2, 3], [1], [4, 5]].
+parse_groups(s) = [parse.(Int, split(m.captures[1], r"[,\s]+"; keepempty=false)) for m in eachmatch(r"\[([0-9,\s]*)\]", s)]
+function group_map(e::Engine)
+    e.key === :coralpop || return ADRIA_GROUP_MAP[e.key]
+    s = get(e.settings, "CORALPOP_MORPH_GROUPS", nothing)
+    return s === nothing ? [[2, 3], [1], [4, 5]] : parse_groups(s)
+end
+const CORALPOP_MAP = (i = findfirst(e -> e.key === :coralpop, engines); i === nothing ? nothing : group_map(engines[i]))
+
 "Engine taxa cover summed onto ADRIA's 5 groups `[t, 5, scenarios]` (CoralPop's mixed morphs split evenly)."
 function harmonised(e::Engine)
     (taxa[e.key] === missing || !haskey(ADRIA_GROUP_MAP, e.key)) && return missing
     a = taxa[e.key]
     out = zeros(NY, 5, size(a, 3))
-    for (g, targets) in enumerate(ADRIA_GROUP_MAP[e.key])
+    for (g, targets) in enumerate(group_map(e))
         g > size(a, 2) && break
         for t in targets
             out[:, t, :] .+= a[:, g, :] ./ length(targets)
@@ -924,6 +934,9 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "- With few scenarios per engine, spreads and every sensitivity figure are illustrative only.$(SA_NOTE)")
     println(io, "- C~scape stores its initial state one year earlier; its first compared year has had one year of dynamics (see 07).")
     println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off. CORSET heat stress: $CORSET_DHW; cyclones: $CORSET_CYC. The Test domain's cyclone data is all zero anyway.")
+    CORALPOP_MAP === nothing || println(io, "- CoralPop morphologies from ADRIA groups: ",
+        join(["$m = " * join(ADRIA_GROUPS[g], " + ") for (m, g) in zip(CORALPOP_MORPHS, CORALPOP_MAP)], "; "),
+        ". Its brooders are the part of Branching CoralPop's upstream split assigns (Branching - Foliose / 9.9, recomputed yearly).")
     println(io, "- Larval supply: CoralBlox and C~scape take larvae only from the domain's connectivity matrix (C~scape's brooders also retain locally). CoralPop: $CORALPOP_LARVAE. Kora: $KORA_LARVAE. Sites the matrix does not supply get no recruits from matrix-only engines.")
     println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
