@@ -63,15 +63,20 @@ the per-scenario benchmarks).
 """
 function engine_config()
     calib = _cfg("CALIBRATION_PATH", "")
+    ## CMR_NO_DISTURBANCE=true: no heat stress and no cyclones for any engine (ADRIA's member 0 =
+    ## "none"), i.e. intrinsic dynamics only. The wave member stays: no engine here treats waves as a
+    ## disturbance (CoralBlox's wave damage is disabled), but C~scape derives each site's wave exposure
+    ## (ub_med) from it, which must not differ between a disturbed and an undisturbed run.
+    no_disturbance = _cfg("NO_DISTURBANCE", "false") == "true"
     return (
         project=_cfg("PROJECT_NAME", "TestDomain_N8"),
         domain_path=_cfg("DOMAIN_PATH", _first_existing(
             "/opt/coral/data/Test_domain",
             raw"C:\Users\vhaller\Documents\GitHub\ADRIA.jl\ADRIA\test\data\Test_domain")),
         rcp=_cfg("RCP", "45"),
-        dhw_idx=parse(Int, _cfg("DHW_IDX", "40")),
+        dhw_idx=no_disturbance ? 0 : parse(Int, _cfg("DHW_IDX", "40")),
         wave_idx=parse(Int, _cfg("WAVE_IDX", "16")),
-        cyclone_idx=parse(Int, _cfg("CYCLONE_IDX", "1")),
+        cyclone_idx=no_disturbance ? 0 : parse(Int, _cfg("CYCLONE_IDX", "1")),
         n_samples=parse(Int, _cfg("N_SAMPLES", "8")),
         ## ADRIA's Sobol' sampler is Owen-scrambled, i.e. random: seeding it makes a run's scenarios reproducible.
         seed=parse(Int, _cfg("SEED", "1234")),
@@ -157,8 +162,8 @@ The ADRIA domain every engine shares. `dom_fixed` has the DHW/wave/cyclone membe
 function load_shared_domain(cfg)
     dom = ADRIA.load_domain(cfg.domain_path, cfg.rcp; calib_params_fn=cfg.calibration_path)
     n_dhw = size(dom.dhw_scens, 3)
-    1 <= cfg.dhw_idx <= n_dhw ||
-        error("DHW_IDX=$(cfg.dhw_idx) is outside this domain's 1:$n_dhw DHW members.")
+    0 <= cfg.dhw_idx <= n_dhw ||
+        error("DHW_IDX=$(cfg.dhw_idx) is outside this domain's 1:$n_dhw DHW members (0 = no heat stress).")
     dom_fixed = deepcopy(dom)
     ADRIA.fix_factor!(dom_fixed, :dhw_scenario, cfg.dhw_idx)
     ADRIA.fix_factor!(dom_fixed, :wave_scenario, cfg.wave_idx)

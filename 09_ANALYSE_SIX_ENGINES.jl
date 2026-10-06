@@ -101,7 +101,8 @@ n_scen = Dict(e.key => ADRIA.n_scenarios(e.rs) for e in engines)
 const LOC_IDS = collect(ref.rs.loc_ids)
 const NL = length(LOC_IDS)
 const KW = ADRIA.loc_k_area(ref.rs) ./ sum(ADRIA.loc_k_area(ref.rs))   # k-area weights, shared by all engines
-const MEMBER = "DHW member $(cfg.dhw_idx), wave member $(cfg.wave_idx)"
+const MEMBER = cfg.dhw_idx == 0 ? "no heat stress (DHW member 0), wave member $(cfg.wave_idx)" :
+    "DHW member $(cfg.dhw_idx), wave member $(cfg.wave_idx)"
 const NSTR = join(["$(e.label) $(n_scen[e.key])" for e in engines], ", ")
 
 # =============================================================================
@@ -194,8 +195,10 @@ function engine_legend!(pos, es=engines; kw...)
     Mk.Legend(pos, elems, [e.label for e in es]; framevisible=false, kw...)
 end
 
-domain_dhw = vec(sum(Array(dom.dhw_scens[:, :, cfg.dhw_idx]) .* KW'; dims=2))    # [years]
-loc_dhw = Array(dom.dhw_scens[:, :, cfg.dhw_idx])                                # [years, locs]
+## One climate member as [years, locs]; member 0 is ADRIA's "none" (all zero).
+member_slice(scens, idx) = idx == 0 ? zeros(size(scens, 1), size(scens, 2)) : Array(scens[:, :, idx])
+loc_dhw = member_slice(dom.dhw_scens, cfg.dhw_idx)                                # [years, locs]
+domain_dhw = vec(sum(loc_dhw .* KW'; dims=2))                                     # [years]
 
 # =============================================================================
 # A. Sanity: initial state and forcing
@@ -227,7 +230,7 @@ figure("A_sanity", "forcing", "The climate forcing all engines share ($MEMBER): 
     Mk.lines!(ax1, YEARS, domain_dhw; color=:black, linewidth=2)
     Mk.hlines!(ax1, [4, 8]; color=:grey30, linestyle=:dash, linewidth=1)
     ax2 = Mk.Axis(fig[2, 1]; ylabel="Ub (m/s)", xlabel="Year", title="Wave orbital velocity")
-    w = Array(dom.wave_scens[:, :, cfg.wave_idx])
+    w = member_slice(dom.wave_scens, cfg.wave_idx)
     for l in 1:NL
         Mk.lines!(ax2, YEARS, w[:, l]; color=(:grey50, 0.5), linewidth=0.8)
     end
