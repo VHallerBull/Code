@@ -110,6 +110,8 @@ function settings_dict(cfg, years)::Dict{String,Any}
         "CYCLONE_IDX" => cfg.cyclone_idx, "YEAR_START" => first(years), "YEAR_END" => last(years),
         "CALIBRATION_PATH" => cfg.calibration_path, "N_SAMPLES" => cfg.n_samples, "SEED" => cfg.seed,
         "N_WORKERS" => cfg.n_workers, "THREADS" => Threads.nthreads(),
+        "CORSET_USE_DHW_AS_BLEACHING" => cfg.corset_use_dhw,
+        "CORSET_USE_CYCLONES_AS_HURRICANES" => cfg.corset_use_cyclones,
         "HOST" => gethostname(), "DATE" => string(now()),
     )
 end

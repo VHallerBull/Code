@@ -877,13 +877,19 @@ for e in engines, (m, t, _) in METRICS
 end
 write_csv(joinpath(PROJECT_DIR, "summary.csv"), rows)
 
+## CORSET's disturbance switches as that run recorded them (older results don't record them: off).
+corset_switch(name) = corset !== nothing && get(engines[corset].settings, name, false) === true
+const CORSET_DHW = corset_switch("CORSET_USE_DHW_AS_BLEACHING") ?
+    "on: each year with site-mean DHW > 4 is one fixed-severity bleaching event" : "off (CORSET_USE_DHW_AS_BLEACHING)"
+const CORSET_CYC = corset_switch("CORSET_USE_CYCLONES_AS_HURRICANES") ? "on" : "off (CORSET_USE_CYCLONES_AS_HURRICANES)"
+
 ## Which processes each engine represents in THIS comparison (from 07's header and the interfaces).
 const CAPABILITIES = [
     ("CoralBlox", "5 ADRIA groups x 7", "yes", "yes", "yes", "yes"),
     ("C~scape", "6 types, 100 IPM classes", "yes", "yes", "yes", "yes"),
     ("CoralPop", "3 morphologies x bins", "yes", "yes", "yes (via domain)", "yes"),
     ("Kora", "5 ADRIA groups x 7", "no", "yes", "no (no cyclone pathway)", "yes"),
-    ("CORSET", "none (brooding/spawning)", "yes", "off by default", "off by default", "no"),
+    ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no"),
     ("ReefMod", "6 groups, 11 bins (counts)", "no", "yes", "switched off", "provisional"),
 ]
 
@@ -898,7 +904,7 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "\n## Caveats\n")
     println(io, "- With few scenarios per engine, spreads and every sensitivity figure are illustrative only.$(SA_NOTE)")
     println(io, "- C~scape stores its initial state one year earlier; its first compared year has had one year of dynamics (see 07).")
-    println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off; CORSET ignores DHW/cyclones unless CORSET_USE_* is set. The Test domain's cyclone data is all zero anyway.")
+    println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off. CORSET heat stress: $CORSET_DHW; cyclones: $CORSET_CYC. The Test domain's cyclone data is all zero anyway.")
     println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
