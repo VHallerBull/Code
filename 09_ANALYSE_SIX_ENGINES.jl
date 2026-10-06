@@ -411,6 +411,19 @@ for e in engines
 end
 size_engines = [e for e in engines if haskey(sizes, e.key)]
 
+## C~scape and ReefMod store colony COUNTS per size class, the other engines cover. Counts are dominated
+## by small colonies (a 2 cm colony has 1/400 of a 40 cm colony's area), so count shares and cover shares
+## are not comparable. Weight counts by the area of a colony at the bin-centre diameter, so every engine's
+## size structure below is cover-based (approximate within each bin).
+function as_cover!(ss)
+    occursin(r"count|density"i, ss["units"]) || return ss
+    area_m2 = π .* (ss["d_cm"] ./ 2) .^ 2 ./ 1e4                       # [G, B]
+    ss["value"] = ss["value"] .* reshape(area_m2, 1, size(area_m2)..., 1)
+    ss["units"] = "colony area, m^2 (from $(ss["units"]) x bin-centre colony area)"
+    return ss
+end
+foreach(as_cover!, values(sizes))
+
 ## Every engine bins colonies differently (per group, per functional type, 7 to 100 classes), so pooling
 ## raw bins gives a saw-tooth. Each (group, bin) amount is assigned to the common diameter class
 ## containing its bin centre instead; all engines then share one set of classes.
@@ -430,13 +443,13 @@ function common_size_share(ss, t)
 end
 year_index(ss, yr) = argmin(abs.(ss["years"] .- yr))
 
-figure("E_size", "size_distribution", "Size distribution of every engine on common diameter classes (share of the engine's total per class, all groups pooled, median scenario) in the first, middle and last year. Units differ (cover for CoralBlox/Kora/CoralPop -- CoralBlox's logged after growth, before that year's disturbance -- IPM colony density for C~scape, colony counts for ReefMod), so compare shapes, not amounts. CORSET has no size structure.") do
+figure("E_size", "size_distribution", "Size distribution of every engine on common diameter classes: share of the engine's coral cover in each class (all groups pooled, median scenario) in the first, middle and last year. C~scape's and ReefMod's colony counts are converted to cover (count x area of a colony at the bin-centre diameter), so every engine is on the same basis. CoralBlox's is logged after growth, before that year's disturbance. CORSET has no size structure.") do
     isempty(size_engines) && return nothing
     fig = Mk.Figure(; size=(1500, 480))
     nk = length(SIZE_LABELS)
     for (j, yr) in enumerate(unique((first(YEARS), YEARS[cld(NY, 2)], last(YEARS))))
         ax = Mk.Axis(fig[1, j]; title=string(yr), xticks=(1:nk, SIZE_LABELS), xticklabelrotation=π / 5,
-            xlabel="Colony diameter (cm)", ylabel=j == 1 ? "Share" : "")
+            xlabel="Colony diameter (cm)", ylabel=j == 1 ? "Share of cover" : "")
         for e in size_engines
             ss = sizes[e.key]
             Mk.scatterlines!(ax, 1:nk, common_size_share(ss, year_index(ss, yr)); color=e.color,
@@ -447,7 +460,7 @@ figure("E_size", "size_distribution", "Size distribution of every engine on comm
     fig
 end
 
-figure("E_size", "size_structure_over_time", "How each engine's size structure shifts over the run: share of the engine's total in each common diameter class (rows) per year (columns), median scenario. Darker = larger share.") do
+figure("E_size", "size_structure_over_time", "How each engine's size structure shifts over the run: share of the engine's coral cover in each common diameter class (rows) per year (columns), median scenario; C~scape's and ReefMod's counts converted to cover. Darker = larger share.") do
     isempty(size_engines) && return nothing
     n = length(size_engines)
     fig = Mk.Figure(; size=(1400, 300 * cld(n, 2)))
@@ -460,11 +473,11 @@ figure("E_size", "size_structure_over_time", "How each engine's size structure s
         ax = Mk.Axis(fig[fld1(i, 2), mod1(i, 2)]; title=e.label, yticks=(1:nk, SIZE_LABELS), ylabel="Diameter (cm)")
         hm = Mk.heatmap!(ax, ss["years"][1:T], 1:nk, permutedims(M_); colormap=:Blues, colorrange=(0, 1))
     end
-    Mk.Colorbar(fig[:, 3], hm; label="Share of total")
+    Mk.Colorbar(fig[:, 3], hm; label="Share of cover")
     fig
 end
 
-figure("E_size", "mean_colony_diameter", "Mean colony diameter over time (weighted by each engine's size-structure amount, all groups pooled; median and IQR over scenarios). A rising line = populations shifting to larger colonies (recruitment failure or growth), falling = recovery from recruitment or loss of large colonies.") do
+figure("E_size", "mean_colony_diameter", "Cover-weighted mean colony diameter over time (all groups pooled; median over scenarios; C~scape's and ReefMod's counts converted to cover). A rising line = populations shifting to larger colonies (recruitment failure or growth), falling = recovery from recruitment or loss of large colonies.") do
     isempty(size_engines) && return nothing
     fig = Mk.Figure(; size=(1000, 500))
     ax = Mk.Axis(fig[1, 1]; xlabel="Year", ylabel="Mean diameter (cm)", yscale=log10, title="Mean colony diameter")
@@ -908,7 +921,7 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
-    println(io, "- Size-structure units differ between engines (see E); compare shapes, not amounts.")
+    println(io, "- Size structure (E) is compared as cover for every engine: C~scape's and ReefMod's colony counts are weighted by the area of a colony at each bin's centre diameter (approximate within a bin). Compare shapes (shares), not amounts.")
     println(io, "\n## What each engine represents here\n")
     println(io, "| Engine | Size structure | Connectivity | DHW bleaching | Cyclones | Juveniles |\n|---|---|---|---|---|---|")
     for c in CAPABILITIES

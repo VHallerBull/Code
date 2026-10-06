@@ -390,8 +390,9 @@ spec_for_disk(spec::DataFrame) = DataFrame(
 #   "units"                what `value` measures -- NOT the same for every engine:
 #                          CoralBlox/Kora/CoralPop: fraction of the domain's habitable area (cover);
 #                          C~scape: IPM colony density (summed over sites); ReefMod: colony counts
-#                          (summed over reefs). `09` therefore compares size-distribution SHAPES
-#                          (each bin's share of the total), not absolute amounts, across engines.
+#                          (summed over reefs). `09` converts counts to cover (count x bin-centre
+#                          colony area) and compares size-distribution SHAPES (each class's share
+#                          of the engine's cover), not absolute amounts, across engines.
 
 "Domain total of `x[:, :, :, loc]`-style cover in m^2 as a fraction of the total habitable area."
 _habitable_area(rs) = sum(ADRIA.loc_k_area(rs))
