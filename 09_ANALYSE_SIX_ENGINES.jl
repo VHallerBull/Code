@@ -896,6 +896,7 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "- With few scenarios per engine, spreads and every sensitivity figure are illustrative only.$(SA_NOTE)")
     println(io, "- C~scape stores its initial state one year earlier; its first compared year has had one year of dynamics (see 07).")
     println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off; CORSET ignores DHW/cyclones unless CORSET_USE_* is set. The Test domain's cyclone data is all zero anyway.")
+    println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
     println(io, "- Size-structure units differ between engines (see E); compare shapes, not amounts.")

@@ -126,7 +126,7 @@ The image contains a **copy** of the local clones, so build only from code you'r
    julia +release --project=. record_sources.jl
    git add -A && git commit -m "..."
    ```
-4. **Optional local smoke test** (no MATLAB needed, about 30-60 min, mostly Kora). Do this before
+4. **Optional local smoke test** (no MATLAB needed, about 15-30 min, mostly C~scape; add 30+ min the first time after a dependency changed, while Julia precompiles). Do this before
    spending an hour on the build:
    ```powershell
    $env:CMR_MODEL_RUNS_DIR="C:\Users\vhaller\cmrsmoke"; $env:CMR_PROJECT_NAME="S"; $env:CMR_N_SAMPLES="2"
@@ -284,7 +284,7 @@ monitoring commands. Resources per engine for this test run (all 1 CPU):
 | coralblox | 8 GB | 1 h | seconds per scenario |
 | cscape | 24 GB | 6 h | one Distributed worker holding a scenario, plus the driver |
 | coralpop | 8 GB | 2 h | Python inside the Julia process |
-| kora | 16 GB | 6 h | individual-based: the slowest engine here (~5-7 GB and ~10-15 min per scenario locally) |
+| kora | 8 GB | 2 h | individual-based, but simulates one 250 m² section per site and extrapolates (~3 GB and ~1 s per scenario locally) |
 | corset | 8 GB | 2 h | |
 | reefmod | 16 GB | 12 h | one MATLAB at a time, including a MATLAB start-up per scenario |
 
@@ -326,7 +326,7 @@ Each also writes `runs/<project>/time_<engine>.log` (GNU time: wall time and pea
 
 ```bash
 cd ~/CoralModelReview/logs
-sbatch --job-name=cmr_kora --mem=16G --time=04:00:00 --export=ALL,ENGINE=kora,CMR_PROJECT_NAME=TestDomain_N8 ../jobs/run_engine.slurm
+sbatch --job-name=cmr_kora --mem=8G --time=02:00:00 --export=ALL,ENGINE=kora,CMR_PROJECT_NAME=TestDomain_N8 ../jobs/run_engine.slurm
 # when it has finished, add its id to runs/TestDomain_N8/jobs.txt as "kora <jobid>" (so its accounting is collected), then:
 sbatch --export=ALL,CMR_PROJECT_NAME=TestDomain_N8 ../jobs/analyse.slurm
 ```
@@ -433,7 +433,7 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 | ReefMod: "Unrecognized field name 'doing_cooling'" | The image was built from a ReefMod-GBR without commit `9be6b5c`. Re-stage and rebuild. |
 | `Read-only file system` writing under `/opt/...` | A script wrote outside `CMR_MODEL_RUNS_DIR`. Check that `CMR_MODEL_RUNS_DIR` points into a bound folder (the jobs set it). |
 | Julia recompiles at job start, or fails writing `~/.julia_coral` | The HPC CPU isn't covered by the image's `JULIA_CPU_TARGET`, or the home quota is full. A one-off recompile into `~/.julia_coral` is harmless. |
-| `OutOfMemory` / job `OUT_OF_MEMORY` in `sacct` | Raise `--mem` for that engine in `submit_all.sh`. Kora needs ~6-7 GB per scenario on the Test domain, C~scape more on bigger domains. |
+| `OutOfMemory` / job `OUT_OF_MEMORY` in `sacct` | Raise `--mem` for that engine in `submit_all.sh`. C~scape needs the most on bigger domains; Kora needs ~3 GB on the Test domain (more if its section size is raised). |
 | `$'\r': command not found` | A script has Windows line endings. Re-stage (it strips them), or run `sed -i 's/\r$//' jobs/*`. |
 | 09: "were run with different settings" | Two engines in one project were run with different `CMR_*` settings. Re-run the odd one out, or use separate projects. |
 | A figure missing from `images/` | It failed. `FIGURES.md` lists failed figures with the error, and the other figures are still written. |

@@ -1666,7 +1666,7 @@ version = "0.6.12"
 deps = ["Bootstrap", "CSV", "CurveFit", "DataFrames", "Dates", "DimensionalData", "DiskArrays", "Distributions", "JSON", "JlrsCore", "KernelDensity", "Missings", "OrderedCollections", "Polynomials", "PrecompileSignatures", "PrecompileTools", "Printf", "Random", "Statistics", "StatsBase", "StatsFuns"]
 path = "../../../../Documents/GitHub/Kora.jl"
 uuid = "63f594c6-e77c-4cfd-819e-df68f57e9897"
-version = "1.4.2"
+version = "1.4.4"
 
     [deps.Kora.extensions]
     ArrowExt = "Arrow"

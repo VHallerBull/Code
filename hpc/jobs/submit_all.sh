@@ -41,14 +41,14 @@ JOBS_FILE="$RUNS/$PROJECT/jobs.txt"
 # Per-engine resources for the serial test run (1 CPU each). Memory/time are generous first guesses
 # for the 10-site Test domain; the run's own benchmarks (K_benchmarks) tell you what to request next.
 #   cscape:  one Distributed worker + this process, each holding a scenario
-#   kora:    individual-based, the slowest engine here: ~10-15 min and ~5-7 GB per scenario
+#   kora:    individual-based, but one 250 m² section per site: ~1 s and ~3 GB per scenario
 #   reefmod: one MATLAB at a time, ~1-2 min MATLAB start-up per scenario
 resources() {
     case "$1" in
         coralblox) echo "--mem=8G  --time=01:00:00" ;;
         cscape)    echo "--mem=24G --time=06:00:00" ;;
         coralpop)  echo "--mem=8G  --time=02:00:00" ;;
-        kora)      echo "--mem=16G --time=06:00:00" ;;
+        kora)      echo "--mem=8G  --time=02:00:00" ;;
         corset)    echo "--mem=8G  --time=02:00:00" ;;
         reefmod)   echo "--mem=16G --time=12:00:00" ;;
     esac
