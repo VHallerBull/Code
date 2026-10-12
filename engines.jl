@@ -43,6 +43,10 @@ haskey(ENV, "CORALPOP_ENGINE_DIR") || (ENV["CORALPOP_ENGINE_DIR"] = _first_exist
 haskey(ENV, "REEFMOD_MATLAB_EXE") || (ENV["REEFMOD_MATLAB_EXE"] = "matlab")
 haskey(ENV, "REEFMOD_GBR_DIR") || (ENV["REEFMOD_GBR_DIR"] = _first_existing(
     "/opt/coral/repos/ReefMod-GBR", raw"C:\Users\vhaller\Documents\GitHub\ReefMod-GBR"))
+## C~scape demography files must carry brms's own reference predictions and reproduce them (link,
+## offset, formula): an unverifiable file stops the run instead of loading with a warning. Set
+## CSCAPE_STRICT_DEMOGRAPHY=false to run with legacy files (their status is then recorded as unverified).
+haskey(ENV, "CSCAPE_STRICT_DEMOGRAPHY") || (ENV["CSCAPE_STRICT_DEMOGRAPHY"] = "true")
 
 using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface,
       DataFrames, Statistics, Printf, Dates, Random
@@ -57,12 +61,16 @@ import CScape, JLD2, XLSX, MAT
 
 Every setting an engine run depends on, from `CMR_<NAME>` environment variables. Defaults: the ADRIA
 Test domain at its median-severity climate member (DHW 40 / wave 16 of 50, computed as the
-k-area-weighted mean over years and sites), 8 Sobol samples per engine, ADRIA's default CoralBlox
-parameters (no calibration file), serial engines (one scenario at a time -- the fairest basis for
-the per-scenario benchmarks).
+k-area-weighted mean over years and sites), 8 Sobol samples per engine, the 2026-08-11 CoralBlox
+calibration (`calibrated_params.nc`: baked into the HPC image at /opt/coral/data, else the shared-drive
+copy on this machine; `CMR_CALIBRATION_PATH=` empty runs on ADRIA's built-in parameters instead --
+those were used by every run before 2026-10-12, by mistake), serial engines (one scenario at a time --
+the fairest basis for the per-scenario benchmarks).
 """
 function engine_config()
-    calib = _cfg("CALIBRATION_PATH", "")
+    calib = _cfg("CALIBRATION_PATH", _first_existing(
+        "/opt/coral/data/calibrated_params.nc",
+        raw"C:\Users\vhaller\Australian Institute of Marine Science\AIMS Decision Support - General\01_PROJECTS\RRAP M&DS\ADRIA\ADRIA Domain data\CoralBlox-ADRIA GBR Calibrated Parameters\2026-08-11\calibrated_params.nc"))
     ## CMR_NO_DISTURBANCE=true: no heat stress and no cyclones for any engine (ADRIA's member 0 =
     ## "none"), i.e. intrinsic dynamics only. The wave member stays: no engine here treats waves as a
     ## disturbance (CoralBlox's wave damage is disabled), but C~scape derives each site's wave exposure
@@ -98,7 +106,10 @@ function engine_config()
         corset_large_piscivore=parse(Float64, _cfg("CORSET_INITIAL_LARGE_PISCIVORE_BIOMASS", "1.0e3")),
         corset_urchin=parse(Float64, _cfg("CORSET_INITIAL_URCHIN_BIOMASS", "1.0e4")),
         corset_use_cyclones=_cfg("CORSET_USE_CYCLONES_AS_HURRICANES", "false") == "true",
-        corset_use_dhw=_cfg("CORSET_USE_DHW_AS_BLEACHING", "false") == "true",
+        ## On by default so CORSET sees heat stress like the other five (CORSETInterface's own default is
+        ## off): each year whose across-site mean DHW > 4 is one CORSET.BleachingEvent for every site.
+        ## DHW member 0 (CMR_NO_DISTURBANCE) or an all-zero member gives no events.
+        corset_use_dhw=_cfg("CORSET_USE_DHW_AS_BLEACHING", "true") == "true",
         ## true: CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own
         ## through the diagonal), as CoralBlox and C~scape do, instead of their own retention/self-seeding.
         larvae_via_connectivity=_cfg("LARVAE_VIA_CONNECTIVITY", "false") == "true",
@@ -121,9 +132,9 @@ function settings_dict(cfg, years)::Dict{String,Any}
     )
 end
 ## The domain is compared by folder name, not full path, so results produced on the HPC can be
-## re-analysed after copying them to another machine.
-const FAIRNESS_KEYS = ("DOMAIN_NAME", "RCP", "DHW_IDX", "WAVE_IDX", "CYCLONE_IDX", "YEAR_START", "YEAR_END",
-    "CALIBRATION_PATH")
+## re-analysed after copying them to another machine. CALIBRATION_PATH is deliberately NOT compared: the
+## calibration only affects CoralBlox, so engines that ignore it may have recorded a different (or no) path.
+const FAIRNESS_KEYS = ("DOMAIN_NAME", "RCP", "DHW_IDX", "WAVE_IDX", "CYCLONE_IDX", "YEAR_START", "YEAR_END")
 
 # =============================================================================
 # The six engines
@@ -161,13 +172,28 @@ engine_dir(project::AbstractString, key::Symbol) = mkpath(joinpath(model_run_dir
 # =============================================================================
 
 """
-    load_shared_domain(cfg) -> (dom, dom_fixed, years)
+    load_shared_domain(cfg; require_calibration=false) -> (dom, dom_fixed, years)
 
 The ADRIA domain every engine shares. `dom_fixed` has the DHW/wave/cyclone members fixed as factors
 (how CoralBlox receives them); the other engines take the same indices through their translators.
+
+The calibration file only changes CoralBlox's factor table (checked: initial cover, DHW, waves,
+connectivity, cyclone mortality and site data are identical with or without it), so only CoralBlox needs
+it: `08` passes `require_calibration=true` for `coralblox`, which then stops if `CMR_CALIBRATION_PATH`
+names a file that does not exist (ADRIA would silently fall back to its built-in parameters). An EMPTY path
+is still the deliberate "built-in parameters" choice. Every other engine, and `09`, loads the domain
+without the calibration when the file is not there instead of stopping.
 """
-function load_shared_domain(cfg)
-    dom = ADRIA.load_domain(cfg.domain_path, cfg.rcp; calib_params_fn=cfg.calibration_path)
+function load_shared_domain(cfg; require_calibration::Bool=false)
+    calib = cfg.calibration_path
+    if !isempty(calib) && !isfile(calib)
+        require_calibration && error(
+            "CoralBlox calibration file not found: $calib. Fix CMR_CALIBRATION_PATH (the HPC image needs " *
+            "CALIB_SRC set when staging), or set it to the empty string to run on ADRIA's built-in " *
+            "parameters on purpose.")
+        calib = ""     # irrelevant to every engine but CoralBlox
+    end
+    dom = ADRIA.load_domain(cfg.domain_path, cfg.rcp; calib_params_fn=calib)
     n_dhw = size(dom.dhw_scens, 3)
     0 <= cfg.dhw_idx <= n_dhw ||
         error("DHW_IDX=$(cfg.dhw_idx) is outside this domain's 1:$n_dhw DHW members (0 = no heat stress).")
@@ -191,6 +217,22 @@ const CSCAPE_DEMOG_NAMES = Dict(
 const CSCAPE_FTS = ["acro_table", "acro_corym", "corym_non_acro", "small_massive", "large_massive", "brooder"]
 
 """
+    cscape_demography_summary(cfg) -> String
+
+What `CScape.verify_demography_file` finds in the six demography files C~scape will use, for the run's
+saved settings and `FIGURES.md`: `verified` = each file's inverse links were read from its brms models and
+its coefficients reproduce brms's own predictions. Throws if a file does not reproduce them (or, with
+CSCAPE_STRICT_DEMOGRAPHY=true, carries no reference predictions) -- so a bad file stops the run here.
+"""
+function cscape_demography_summary(cfg)::String
+    results = [CScape.verify_demography_file(joinpath(cfg.cscape_demog_dir,
+                   "demog_julia_$(CSCAPE_DEMOG_NAMES[ft])$(CSCAPE_DEMOG_STAMP).rds")) for ft in CSCAPE_FTS]
+    status = all(r -> r.status === :verified, results) ? "verified" : "UNVERIFIED"
+    links = join(sort(unique(["growth $(r.growth_link), sigma $(r.sigma_link), survival $(r.surv_link)" for r in results])), " | ")
+    return "$status against brms (CSCAPE_STRICT_DEMOGRAPHY=$(CScape.strict_demography())): $links, $(length(results)) files"
+end
+
+"""
     setup_cscape_project(dir, cfg, years)
 
 Make `dir` a C~scape project: the six converted `demog_julia_*` files in `dir/data` and a one-row
@@ -205,7 +247,9 @@ function setup_cscape_project(dir::AbstractString, cfg, years)
         src = joinpath(cfg.cscape_demog_dir, f)
         isfile(src) || error("Converted C~scape demography '$f' not found in CSCAPE_DEMOG_DIR=$(cfg.cscape_demog_dir).")
         dst = joinpath(data_dir, f)
-        isfile(dst) || cp(src, dst)
+        ## Refresh a copy that differs from the source (a re-exported file must not be shadowed by a
+        ## stale one left in a reused project folder).
+        (isfile(dst) && read(dst) == read(src)) || cp(src, dst; force=true)
     end
     xlsx = joinpath(dir, "ScenarioID.xlsx")
     isfile(xlsx) && return dir

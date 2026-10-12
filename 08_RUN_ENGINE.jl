@@ -48,15 +48,46 @@ cfg = engine_config()
 @info "Running $LABEL" cfg threads = Threads.nthreads()
 ispow2(cfg.n_samples) || @warn "N_SAMPLES=$(cfg.n_samples) is not a power of 2; ADRIA's Sobol' sampler may refuse it."
 
+## C~scape only: check its demography files against brms's own predictions BEFORE anything runs (a file
+## whose link/offset/formula is wrong stops the job here), and record the outcome with the results.
+const CSCAPE_DEMOGRAPHY = KEY === :cscape ? cscape_demography_summary(cfg) : nothing
+KEY === :cscape && @info "C~scape demography: $CSCAPE_DEMOGRAPHY"
+
 # =============================================================================
 # Output folder -- a re-run replaces this engine's previous output (and only this engine's)
 # =============================================================================
+
+"""
+    remove_dir(d; move_aside=false)
+
+`rm(d; recursive=true)`, tolerating NFS (the HPC home): a file some handle still has open survives there
+as a `.nfs*` placeholder, so the folder cannot be removed (ENOTEMPTY -- seen right after CoralBlox's
+warm-up, whose discarded result set still held its files). The garbage collector runs first so a dropped
+result set closes them; if the folder still cannot be removed it is left in place with a warning, or with
+`move_aside=true` renamed out of the way so the run starts from an empty folder.
+"""
+function remove_dir(d::AbstractString; move_aside::Bool=false)
+    isdir(d) || return nothing
+    GC.gc()
+    try
+        rm(d; recursive=true, force=true)
+    catch err
+        if move_aside
+            aside = "$(d)_stale_$(Dates.format(now(), "yyyymmdd_HHMMSS"))"
+            @warn "Could not remove $d (files still open on NFS?); moved it to $aside" exception = err
+            mv(d, aside)
+        else
+            @warn "Could not remove $d (files still open on NFS?); left in place" exception = err
+        end
+    end
+    return nothing
+end
 
 const OUT = engine_dir(cfg.project, KEY)
 const RUN_DIR = joinpath(OUT, "run")
 const WARMUP_DIR = joinpath(OUT, "warmup")
 for d in (RUN_DIR, WARMUP_DIR)
-    isdir(d) && rm(d; recursive=true, force=true)
+    remove_dir(d; move_aside=true)
 end
 for f in ("result.jld2", "result_path.txt", "samples.jld2", "benchmark.csv", "size_structure.jld2")
     isfile(joinpath(OUT, f)) && rm(joinpath(OUT, f))
@@ -67,7 +98,7 @@ end
 # =============================================================================
 
 t_domain = @elapsed begin
-    dom, dom_fixed, YEARS = load_shared_domain(cfg)
+    dom, dom_fixed, YEARS = load_shared_domain(cfg; require_calibration=(KEY === :coralblox))
     spec = make_spec(KEY, dom_fixed, cfg, YEARS, RUN_DIR)
     Random.seed!(cfg.seed)
     scens = ADRIA.sample(spec, cfg.n_samples)
@@ -83,7 +114,7 @@ first_run = (time_s=NaN, gc_s=NaN, alloc_gb=NaN, compile_s=NaN)
 if cfg.warmup
     @info "$LABEL: warm-up run (1 scenario)"
     _, first_run = timed_call(() -> run_engine(KEY, dom, dom_fixed, scens[1:1, :], spec, WARMUP_DIR, cfg, YEARS))
-    rm(WARMUP_DIR; recursive=true, force=true)
+    remove_dir(WARMUP_DIR)   # a leftover is only disk space; the next run of this engine clears it
 end
 
 @info "$LABEL: main run ($(nrow(scens)) scenarios)"
@@ -94,9 +125,13 @@ rs, main_run = timed_call(() -> run_engine(KEY, dom, dom_fixed, scens, spec, RUN
 # =============================================================================
 
 save_engine_result(KEY, rs, OUT)
+run_settings = settings_dict(cfg, YEARS)
+## The calibration file only affects CoralBlox: say so in the other engines' records instead of a path they never used.
+KEY === :coralblox || (run_settings["CALIBRATION_PATH"] = "n/a (CoralBlox only)")
+CSCAPE_DEMOGRAPHY === nothing || (run_settings["CSCAPE_DEMOGRAPHY"] = CSCAPE_DEMOGRAPHY)
 JLD2.save(joinpath(OUT, "samples.jld2"), Dict(
     "scens" => scens, "varying" => String.(varying), "spec" => spec_for_disk(spec),
-    "settings" => settings_dict(cfg, YEARS)))
+    "settings" => run_settings))
 
 t_size = @elapsed (ss = extract_size_structure(KEY, rs, RUN_DIR, dom, cfg, scens))
 ss === nothing || JLD2.save(joinpath(OUT, "size_structure.jld2"), ss)

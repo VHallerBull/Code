@@ -29,7 +29,10 @@ rest are still written. Engine identity is colour + line style + marker througho
 closest pair under deuteranopia is CoralPop vs Kora, Delta E 7.6, so colour alone is not enough).
 
 Configuration: the same `CMR_<NAME>` variables as 08 (`engine_config` in engines.jl);
-`CMR_PROJECT_NAME` picks the project to analyse.
+`CMR_PROJECT_NAME` picks the project to analyse. The domain, RCP and climate member are read from the
+saved results instead. `CMR_DOMAIN_PATH`, if set, only says where that domain's folder is; otherwise the
+path the engines recorded is used, or the default when that doesn't exist here (results copied from
+the HPC).
 =#
 
 include(joinpath(@__DIR__, "engines.jl"))
@@ -49,6 +52,29 @@ const IMG = mkpath(joinpath(PROJECT_DIR, "images"))
 # =============================================================================
 # 0. Load every engine that has a result
 # =============================================================================
+
+## The domain, RCP and climate member come from the saved results, not from this shell's CMR_* variables,
+## so the forcing figures and FIGURES.md always describe what the engines actually ran. CMR_DOMAIN_PATH
+## only says where the domain folder is (needed after copying results to another machine); its folder
+## name must still match the one the engines ran on.
+function run_settings(project_dir)
+    for key in ENGINE_ORDER
+        d = joinpath(project_dir, String(key))
+        has_engine_result(key, d) && return JLD2.load(joinpath(d, "samples.jld2"), "settings")
+    end
+    error("No engine results under $project_dir -- run 08_RUN_ENGINE.jl first.")
+end
+ran = run_settings(PROJECT_DIR)
+ran_path = get(ran, "DOMAIN_PATH", "")
+ran_domain = (haskey(ENV, "CMR_DOMAIN_PATH") || !ispath(ran_path)) ? cfg.domain_path : ran_path
+ran_name = get(ran, "DOMAIN_NAME", basename(normpath(ran_domain)))
+basename(normpath(ran_domain)) == ran_name || error("The engines ran on the domain `$ran_name`, but " *
+    "$ran_domain is a different folder. Set CMR_DOMAIN_PATH to that domain's folder.")
+ran_cfg = (domain_path=ran_domain, rcp=get(ran, "RCP", cfg.rcp), dhw_idx=get(ran, "DHW_IDX", cfg.dhw_idx),
+    wave_idx=get(ran, "WAVE_IDX", cfg.wave_idx), cyclone_idx=get(ran, "CYCLONE_IDX", cfg.cyclone_idx))
+differs = [k for k in (:rcp, :dhw_idx, :wave_idx, :cyclone_idx) if ran_cfg[k] != cfg[k]]
+isempty(differs) || @warn "This shell's CMR_* settings differ from the saved results ($(join(differs, ", "))); using the results' values." ran_cfg
+cfg = merge(cfg, ran_cfg)
 
 dom, _, YEARS = load_shared_domain(cfg)
 const NY = length(YEARS)
@@ -900,10 +926,20 @@ for e in engines, (m, t, _) in METRICS
 end
 write_csv(joinpath(PROJECT_DIR, "summary.csv"), rows)
 
+## C~scape's demography check as that run recorded it (results from before the check existed carry none --
+## and were run with survival models whose cloglog link had been exported as logit, so their cover is too low).
+const CSCAPE_DEMOGRAPHY = let i = findfirst(e -> e.key === :cscape, engines)
+    i === nothing ? nothing : get(engines[i].settings, "CSCAPE_DEMOGRAPHY", "NOT RECORDED -- run before the demography check existed")
+end
+const CSCAPE_DEMOGRAPHY_OK = CSCAPE_DEMOGRAPHY !== nothing && startswith(CSCAPE_DEMOGRAPHY, "verified")
+CSCAPE_DEMOGRAPHY === nothing || CSCAPE_DEMOGRAPHY_OK ||
+    @warn "C~scape demography is not verified against brms -- treat its results with caution" CSCAPE_DEMOGRAPHY
+
 ## CORSET's disturbance switches as that run recorded them (older results don't record them: off).
 corset_switch(name) = corset !== nothing && get(engines[corset].settings, name, false) === true
 const CORSET_DHW = corset_switch("CORSET_USE_DHW_AS_BLEACHING") ?
-    "on: each year with site-mean DHW > 4 is one fixed-severity bleaching event" : "off (CORSET_USE_DHW_AS_BLEACHING)"
+    "on: each year whose across-site mean DHW > 4 is one bleaching event at every site (a random 0-50 % coral loss per site, not scaled by DHW)" :
+    "off (CORSET_USE_DHW_AS_BLEACHING)"
 const CORSET_CYC = corset_switch("CORSET_USE_CYCLONES_AS_HURRICANES") ? "on" : "off (CORSET_USE_CYCLONES_AS_HURRICANES)"
 ## Where CoralPop's and Kora's larvae came from (CMR_LARVAE_VIA_CONNECTIVITY, as each run recorded it).
 via_matrix(key) = (i = findfirst(e -> e.key === key, engines);
@@ -919,7 +955,7 @@ const CAPABILITIES = [
     ("CoralPop", "3 morphologies x bins", CORALPOP_LARVAE, "yes", "yes (via domain)", "yes"),
     ("Kora", "5 ADRIA groups x 7", KORA_LARVAE, "yes", "no (no cyclone pathway)", "yes"),
     ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no"),
-    ("ReefMod", "6 groups, 11 bins (counts)", "no", "yes", "switched off", "provisional"),
+    ("ReefMod", "6 groups, 11 bins (counts)", "yes (ADRIA's matrix)", "yes", "switched off", "provisional"),
 ]
 
 open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
@@ -933,12 +969,21 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "\n## Caveats\n")
     println(io, "- With few scenarios per engine, spreads and every sensitivity figure are illustrative only.$(SA_NOTE)")
     println(io, "- C~scape stores its initial state one year earlier; its first compared year has had one year of dynamics (see 07).")
+    CSCAPE_DEMOGRAPHY === nothing || println(io, CSCAPE_DEMOGRAPHY_OK ? "- C~scape demography: $CSCAPE_DEMOGRAPHY." :
+        "- **WARNING -- C~scape demography NOT verified against brms** ($CSCAPE_DEMOGRAPHY). Results produced with the 260903 files before this check had survival (cloglog models exported as logit) too low, so C~scape's cover was far below carrying capacity and its massives died out: do not trust them; re-run C~scape.")
     println(io, "- Kora has no cyclone pathway; ReefMod's cyclones and CoTS are switched off. CORSET heat stress: $CORSET_DHW; cyclones: $CORSET_CYC. The Test domain's cyclone data is all zero anyway.")
     CORALPOP_MAP === nothing || println(io, "- CoralPop morphologies from ADRIA groups: ",
         join(["$m = " * join(ADRIA_GROUPS[g], " + ") for (m, g) in zip(CORALPOP_MORPHS, CORALPOP_MAP)], "; "),
         ". Its brooders are the part of Branching CoralPop's upstream split assigns (Branching - Foliose / 9.9, recomputed yearly).")
     println(io, "- Larval supply: CoralBlox and C~scape take larvae only from the domain's connectivity matrix (C~scape's brooders also retain locally). CoralPop: $CORALPOP_LARVAE. Kora: $KORA_LARVAE. Sites the matrix does not supply get no recruits from matrix-only engines.")
     println(io, "- Kora simulates at most $(round(Int, KoraInterface.KORA_SECTION_AREA_M2)) m² of habitable area per site and scales its cover up to the whole site (KoraInterface's section extrapolation), so its time and memory (K) are for those sections, not whole sites.")
+    let i = findfirst(e -> e.key === :coralblox, engines)
+        if i !== nothing
+            cp = get(engines[i].settings, "CALIBRATION_PATH", "")
+            println(io, "- CoralBlox parameters: ", isempty(cp) ? "ADRIA's built-in defaults (no calibration file)" :
+                "calibration `$(basename(cp))` (the file only affects CoralBlox; it is not compared across engines)", ".")
+        end
+    end
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
     println(io, "- Size structure (E) is compared as cover for every engine: C~scape's and ReefMod's colony counts are weighted by the area of a colony at each bin's centre diameter (approximate within a bin). Compare shapes (shares), not amounts.")
