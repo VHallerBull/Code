@@ -24,9 +24,15 @@ load_singularity() {
 # container <cmd...> -- run a command inside the image with the runs folder (and MATLAB, if set up)
 # bound. The host environment (CMR_*, licence variables, REEFMOD_MATLAB_EXE) passes through.
 container() {
+    container_argv "$@"
+    "${CONTAINER_ARGV[@]}"
+}
+
+# container_argv <cmd...> -- the singularity command line `container` runs, into the array CONTAINER_ARGV.
+container_argv() {
     local binds="$RUNS"
     [ -n "$EXTRA_BINDS" ] && binds="$binds,$EXTRA_BINDS"
-    singularity exec --bind "$binds" "$SIF" "$@"
+    CONTAINER_ARGV=(singularity exec --bind "$binds" "$SIF" "$@")
 }
 
 # setup_matlab -- load the host MATLAB and make it usable INSIDE the container: bind its install
@@ -54,7 +60,14 @@ setup_matlab() {
 }
 
 # timed <logfile> <cmd...> -- run under /usr/bin/time -v when available (wall time, peak RSS).
+# /usr/bin/time is a separate program and cannot run shell functions, so `timed log container ...` is
+# expanded to the singularity command line first.
 timed() {
     local log="$1"; shift
+    if [ "$1" = "container" ]; then
+        shift
+        container_argv "$@"
+        set -- "${CONTAINER_ARGV[@]}"
+    fi
     if [ -x /usr/bin/time ]; then /usr/bin/time -v -o "$log" "$@"; else "$@"; fi
 }

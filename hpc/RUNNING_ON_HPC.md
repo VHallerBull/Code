@@ -1,7 +1,7 @@
 # Running the six-engine comparison on the HPC
 
 How to run CoralBlox, C~scape, CoralPop, Kora, CORSET and ReefMod on the ADRIA Test domain on the AIMS
-HPC (`hpc-h001`, Slurm), from a fresh build of the container to the comparison figures. This covers what
+HPC (`hpc-l001.aims.gov.au`, Slurm), from a fresh build of the container to the comparison figures. This covers what
 to build, what to upload, and which scripts to run in which order.
 
 ## Contents
@@ -14,7 +14,7 @@ to build, what to upload, and which scripts to run in which order.
 6. [Run, in this order](#6-run-in-this-order)
 7. [Retrieve the results](#7-retrieve-the-results)
 8. [Configuration reference](#8-configuration-reference)
-9. [Scaling up to the full run](#9-scaling-up-to-the-full-run)
+9. [Other domains and the full run](#9-other-domains-and-the-full-run)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Reproducibility](#11-reproducibility)
 12. [File reference](#12-file-reference)
@@ -24,7 +24,7 @@ to build, what to upload, and which scripts to run in which order.
 ## 1. Overview
 
 ```
- Windows laptop                      WSL (Ubuntu, same laptop)               AIMS HPC (hpc-h001, Slurm)
+ Windows laptop                      WSL (Ubuntu, same laptop)               AIMS HPC (hpc-l001, Slurm)
  --------------                      -------------------------               --------------------------
  Documents/GitHub/<12 clones>  --.
  CoralModelReview/Code/        --+-> stage_sources.sh -> ~/coral-build/
@@ -81,7 +81,7 @@ sudo add-apt-repository -y ppa:apptainer/ppa && sudo apt-get update && sudo apt-
 ### HPC
 
 ```bash
-ssh hpc-h001
+ssh vhaller@hpc-l001.aims.gov.au
 mkdir -p ~/CoralModelReview/{runs,logs,jobs}
 ```
 
@@ -167,7 +167,7 @@ Settings you can override (prefix the command):
 | `GITHUB_SRC` | `/mnt/c/Users/vhaller/Documents/GitHub` | where the clones are |
 | `DOMAIN_SRC` | `$GITHUB_SRC/ADRIA.jl/ADRIA/test/data/Test_domain` | the domain to bake in |
 | `DEMOG_SRC` | CscapeInterface's `AdjustedRecruitment10_Disturbance/data` | converted C~scape demography |
-| `CALIB_SRC` | *(none)* | a CoralBlox `calibrated_params.nc` to bake in (then set `CMR_CALIBRATION_PATH=/opt/coral/data/calibrated_params.nc` when running) |
+| `CALIB_SRC` | the shared drive's `CoralBlox-ADRIA GBR Calibrated Parameters/2026-08-11/calibrated_params.nc` | the CoralBlox calibration to bake in (required; `engines.jl` uses the baked-in copy by default) |
 | `BUILD_DIR` | `~/coral-build` | |
 
 **`build_image.sh`** runs `apptainer build --fakeroot` (log: `~/coral-build/build.log`). The image is
@@ -207,12 +207,16 @@ these files go to the HPC:
 From WSL (`build_image.sh` prints these with your paths):
 
 ```bash
-ssh hpc-h001 "mkdir -p ~/CoralModelReview/{runs,logs,jobs}"
-rsync -avP ~/coral-build/coral_engines.sif ~/coral-build/coral_engines.sif.sha256 hpc-h001:~/CoralModelReview/
-rsync -avP ~/coral-build/upload/jobs/ hpc-h001:~/CoralModelReview/jobs/
-rsync -avP ~/coral-build/upload/STAGED_SOURCES.md hpc-h001:~/CoralModelReview/
-# fallback route only:
-rsync -avP ~/coral-build/upload/reefmod_host/ hpc-h001:~/CoralModelReview/reefmod_host/
+HPC=vhaller@hpc-l001.aims.gov.au
+ssh $HPC "mkdir -p ~/CoralModelReview/{runs,logs,jobs}"
+rsync -avP ~/coral-build/coral_engines.sif ~/coral-build/coral_engines.sif.sha256 $HPC:~/CoralModelReview/
+rsync -avP --chmod=go-w ~/coral-build/upload/jobs/ $HPC:~/CoralModelReview/jobs/
+rsync -avP ~/coral-build/upload/STAGED_SOURCES.md $HPC:~/CoralModelReview/
+```
+
+```bash
+# fallback route only (HPC set as above):
+rsync -avP --chmod=go-w ~/coral-build/upload/reefmod_host/ $HPC:~/CoralModelReview/reefmod_host/
 ```
 
 `rsync -P` resumes an interrupted transfer of the multi-GB image. The layout on the HPC is then:
@@ -297,7 +301,7 @@ Variations (every `CMR_*` variable in your shell is passed on to the jobs):
 bash jobs/submit_all.sh TestDomain_N8 --engines "kora corset"      # a subset
 CMR_N_SAMPLES=16 bash jobs/submit_all.sh TestDomain_N16             # more scenarios
 CMR_DHW_IDX=19 bash jobs/submit_all.sh TestDomain_N8_dhw19          # another climate member
-CMR_NO_DISTURBANCE=true bash jobs/submit_all.sh TestDomain_N8_nodist --engines "coralblox cscape coralpop kora corset"  # no heat stress/cyclones (not ReefMod yet)
+CMR_NO_DISTURBANCE=true bash jobs/submit_all.sh TestDomain_N8_nodist  # no heat stress/cyclones, all six engines
 bash jobs/submit_all.sh TestDomain_N8 --reefmod-fallback            # ReefMod via host MATLAB (6e)
 ```
 
@@ -323,17 +327,24 @@ Each engine writes `runs/<project>/<engine>/` containing:
 
 Each also writes `runs/<project>/time_<engine>.log` (GNU time: wall time and peak memory).
 
-**Re-run one engine** (for example after a failure), then the analysis:
+**Re-run one engine** (for example after a failure), then the analysis, with the same `CMR_*`
+settings the project was submitted with (domain, members, ...):
+
+```bash
+cd ~/CoralModelReview
+bash jobs/submit_all.sh TestDomain_N8 --engines kora
+```
+
+`jobs.txt` keeps the other engines' job ids and replaces kora's, so the analysis (which waits for the
+re-run) still collects everyone's Slurm accounting.
+
+The analysis can be re-run on its own any time. It compares whichever engines have a result and lists
+the missing ones in `FIGURES.md`:
 
 ```bash
 cd ~/CoralModelReview/logs
-sbatch --job-name=cmr_kora --mem=8G --time=02:00:00 --export=ALL,ENGINE=kora,CMR_PROJECT_NAME=TestDomain_N8 ../jobs/run_engine.slurm
-# when it has finished, add its id to runs/TestDomain_N8/jobs.txt as "kora <jobid>" (so its accounting is collected), then:
 sbatch --export=ALL,CMR_PROJECT_NAME=TestDomain_N8 ../jobs/analyse.slurm
 ```
-
-The analysis can be re-run any time. It compares whichever engines have a result and lists the missing
-ones in `FIGURES.md`.
 
 ### 6e. Fallback: ReefMod with MATLAB outside the container
 
@@ -371,13 +382,15 @@ The analysis job writes into `runs/<project>/`:
 Copy them back to `ModelRuns/` (the raw `*/run/` folders can stay on the HPC). From WSL:
 
 ```bash
+HPC=vhaller@hpc-l001.aims.gov.au
 DEST="/mnt/c/Users/vhaller/OneDrive - Australian Institute of Marine Science/DecisionSupport/CoralModelReview/ModelRuns/TestDomain_N8"
 mkdir -p "$DEST"
-rsync -avP --exclude='*/run/' --exclude='*/warmup/' hpc-h001:~/CoralModelReview/runs/TestDomain_N8/ "$DEST/"
+rsync -avP --exclude='*/run/' --exclude='*/warmup/' $HPC:~/CoralModelReview/runs/TestDomain_N8/ "$DEST/"
 ```
 
 Leaving out `run/` keeps the copy small. Every `<engine>/result.jld2` and `samples.jld2` comes back,
-so `09_ANALYSE_SIX_ENGINES.jl` can be re-run on the laptop with `CMR_PROJECT_NAME=TestDomain_N8`. The
+so `09_ANALYSE_SIX_ENGINES.jl` can be re-run on the laptop with `CMR_PROJECT_NAME=TestDomain_N8` (for
+another domain, also set `CMR_DOMAIN_PATH` to a local copy of it: [9a](#9a-running-a-different-domain)). The
 one exception is CoralBlox, whose ADRIA result store sits in `coralblox/run/`: add
 `--include='coralblox/run/***'` before the excludes if you want to re-analyse locally.
 
@@ -391,25 +404,90 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 |---|---|---|
 | `CMR_PROJECT_NAME` | `TestDomain_N8` | output folder under `runs/` (set by `submit_all.sh`) |
 | `CMR_MODEL_RUNS_DIR` | `~/CoralModelReview/runs` (jobs) / `../ModelRuns` (laptop) | where projects are written |
-| `CMR_DOMAIN_PATH` | `/opt/coral/data/Test_domain` (image) | ADRIA domain; the folder must keep its own name |
+| `CMR_DOMAIN_PATH` | `/opt/coral/data/Test_domain` (image) | ADRIA domain; the folder must keep its own name. Another domain needs no rebuild ([9a](#9a-running-a-different-domain)) |
 | `CMR_RCP` | `45` | |
-| `CMR_DHW_IDX` / `CMR_WAVE_IDX` / `CMR_CYCLONE_IDX` | `40` / `16` / `1` | the climate member all engines share |
-| `CMR_NO_DISTURBANCE` | `false` | `true` = no heat stress and no cyclones for every engine (DHW and cyclone member 0); the wave member stays, as it only sets C~scape's site wave exposure. Use its own project name. **Not for ReefMod yet**: its bridge stops with "Needs dhw_idx > 0", so add `--engines "coralblox cscape coralpop kora corset"` |
+| `CMR_DHW_IDX` / `CMR_WAVE_IDX` / `CMR_CYCLONE_IDX` | `40` / `16` / `1` | the climate member all engines share (Test domain values; each domain has its own, see 9a) |
+| `CMR_NO_DISTURBANCE` | `false` | `true` = no heat stress and no cyclones for every engine (DHW and cyclone member 0); the wave member stays, as it only sets C~scape's site wave exposure. Use its own project name. ReefMod gets an all-zero DHW (it only bleaches at DHW >= 3) and CORSET no bleaching years; images built before 2026-10-08 stop ReefMod with "Needs dhw_idx > 0", so there add `--engines "coralblox cscape coralpop kora corset"` |
 | `CMR_LARVAE_VIA_CONNECTIVITY` | `false` | `true` = CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own via the diagonal), like CoralBlox and C~scape, instead of CoralPop's own retention / Kora's self-seeding. Use its own project name |
 | `CMR_N_SAMPLES` | `8` | scenarios per engine (power of 2) |
 | `CMR_SEED` | `1234` | seed for ADRIA's scrambled Sobol' sampler |
 | `CMR_N_WORKERS` | `0` | parallelism; its meaning differs per engine (CoralPop/C~scape: Distributed workers; Kora/CORSET: thread cap, needs more CPUs; ReefMod: concurrent MATLABs) |
 | `CMR_CSCAPE_THREADS` | `1` | threads per C~scape worker |
 | `CMR_WARMUP` | `true` | run 1 scenario first so time to first result and steady-state cost are measured separately |
-| `CMR_CALIBRATION_PATH` | *(empty: ADRIA defaults)* | CoralBlox calibration NetCDF |
-| `CMR_CORSET_INITIAL_*_BIOMASS`, `CMR_CORSET_USE_*` | see `engines.jl` | CORSET's placeholder consumer biomass and disturbance switches |
+| `CMR_CALIBRATION_PATH` | `/opt/coral/data/calibrated_params.nc` (baked in) | CoralBlox calibration NetCDF. Set it to the empty string to run on ADRIA's built-in parameters instead (every run before 2026-10-12 did, by mistake); a path that does not exist stops the CoralBlox job (the other engines don't use the file) |
+| `CMR_CORSET_USE_DHW_AS_BLEACHING` | `true` | CORSET's heat stress: each year whose across-site mean DHW > 4 is one bleaching event at every site, a random 0-50 % coral loss per site (CORSET.jl's placeholder, not scaled by DHW). DHW member 0 or an all-zero member gives none. `false` = CORSET without heat stress (the default before 2026-10-08) |
+| `CMR_CORSET_USE_CYCLONES_AS_HURRICANES` | `false` | `true` = years whose mean cyclone mortality > 0.1 become CORSET hurricane events |
+| `CMR_CORSET_INITIAL_*_BIOMASS` | see `engines.jl` | CORSET's placeholder consumer biomass |
 | `MATLAB_MODULE` | `matlab` | the module the ReefMod jobs load |
 | `REEFMOD_ARRAY_CONCURRENCY` | `4` | fallback route: simultaneous MATLAB tasks |
 | `CMR_BASE`, `SIF`, `RUNS` | `~/CoralModelReview`, `$CMR_BASE/coral_engines.sif`, `$CMR_BASE/runs` | locations (`jobs/common.sh`) |
 
 ---
 
-## 9. Scaling up to the full run
+## 9. Other domains and the full run
+
+### 9a. Running a different domain
+
+The domain is a setting, not part of the build, so a new domain needs **no rebuild**. `CMR_DOMAIN_PATH`
+points the jobs at any ADRIA domain folder (the Test domain inside the image is only the default).
+Upload the folder, check that the container can see it, and submit with that domain's own climate
+members. The example uses the Moore domain.
+
+1. **Upload** (WSL). Leave off the trailing `/` after the folder name so it keeps its name on the HPC:
+   ```bash
+   HPC=vhaller@hpc-l001.aims.gov.au
+   ssh $HPC "mkdir -p ~/CoralModelReview/domains"
+   rsync -avP --chmod=go-w "/mnt/c/Users/vhaller/OneDrive - Australian Institute of Marine Science/DecisionSupport/CoralModelReview/domains/SingleReef"
+   ```
+   Don't rename the folder: every engine records the domain by its folder name, and `09` refuses to
+   compare engines whose domain names differ. `--chmod=go-w` is there because WSL shows files under
+   `/mnt/c` as writable by everyone, and `rsync -a` would carry that over to the shared cluster.
+2. **Check the container can see it** (login node):
+   ```bash
+   module load singularity/singularity.module
+   singularity exec ~/CoralModelReview/coral_engines.sif ls $HOME/CoralModelReview/domains/SingleReef
+   ```
+   It should list `connectivity`, `DHWs`, `datapackage.json` and so on. Singularity normally mounts
+   your home folder inside the container, but the job scripts only bind `runs/` explicitly. If you get
+   "No such file", run `export SINGULARITY_BIND=$HOME/CoralModelReview/domains` before submitting; the
+   jobs inherit it.
+3. **Submit** with the domain and no disturbance run:
+   ```bash
+   cd ~/CoralModelReview
+   CMR_DOMAIN_PATH=$HOME/CoralModelReview/domains/SingleReef \
+     CMR_N_SAMPLES=8 CMR_DHW_IDX=1 CMR_WAVE_IDX=1 CMR_CYCLONE_IDX=1 bash jobs/submit_all.sh SingleReef_noDist
+   ```
+
+   **Submit** with the domain and its climate members:
+   ```bash
+   cd ~/CoralModelReview
+   CMR_DOMAIN_PATH=$HOME/CoralModelReview/domains/SingleReef \
+     CMR_N_SAMPLES=8 CMR_DHW_IDX=2 CMR_WAVE_IDX=1 CMR_CYCLONE_IDX=1 bash jobs/submit_all.sh SingleReef_1
+   ```
+
+Points to watch:
+
+- **The climate members belong to the domain.** The defaults (DHW 40 / wave 16) are the Test domain's
+  median-severity members. For Moore, `06_RUNNING_A_NEW_PROJECT.jl`'s notes use DHW 64 (its median
+  severity), wave 1 (its only wave member) and cyclone 1. For another domain, choose them the same way
+  (median severity: see the computation in `engines.jl`'s `engine_config` docstring). A DHW member the
+  domain doesn't have stops the run with an error.
+- **Use `$HOME`, not `~`,** in `CMR_DOMAIN_PATH`, so it is a full path everywhere.
+- **The job sizes are set for the 10-site Test domain.** The memory and time limits in `resources()`
+  (`jobs/submit_all.sh`) will probably be too small for Moore, especially for C~scape and ReefMod.
+  Raise them, or first do a sizing run (`CMR_N_SAMPLES=2`, project `Moore_N2`) and size the real run
+  from its benchmarks ([9b](#9b-scaling-up-to-the-full-run)).
+- **Re-running the analysis by hand** (6d) needs nothing extra. `09` reads the domain, RCP and climate
+  members from the saved results, and finds the domain at the path the engines recorded. To
+  re-analyse on the laptop after copying the results back ([7](#7-retrieve-the-results)), set
+  `CMR_DOMAIN_PATH` to a local copy of the same domain folder (for example
+  `C:\Users\vhaller\Downloads\Moore_2025-08-22_v080`).
+
+Rebuilding only makes sense to bake a domain into the image so it is self-contained: re-stage with
+`DOMAIN_SRC=...` and rebuild (section 4, ~50 min). Even then you set
+`CMR_DOMAIN_PATH=/opt/coral/data/<folder>`, because only `Test_domain` is the default.
+
+### 9b. Scaling up to the full run
 
 1. Read `benchmark_summary.csv` and figure section K from the test run: seconds per scenario, peak
    memory and disk per scenario, per engine.
@@ -418,10 +496,48 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 3. Size each engine's job as **time ≈ N × seconds-per-scenario ÷ parallelism**, with memory from peak
    memory × workers. Raise `--cpus-per-task` and `CMR_N_WORKERS` together (edit `resources()` in
    `submit_all.sh`). ReefMod's parallelism is capped by MATLAB licences.
-4. For a real domain, re-stage with `DOMAIN_SRC=...`, or bind a domain folder into the container and
-   set `CMR_DOMAIN_PATH`. Choose the climate member the same way (median severity: see the computation
-   in `engines.jl`'s `engine_config` docstring), and remember the domain's own `WAVE_IDX`/`ub_med`
-   caveats (06's notes).
+4. For a real domain, set it up as in [9a](#9a-running-a-different-domain) (its own climate members
+   included), and remember the domain's own `WAVE_IDX`/`ub_med` caveats (06's notes).
+
+### 9c. Several domains and climate members at once
+
+`jobs/submit_batch.sh` runs `submit_all.sh` once per domain × DHW member. Each pair is its own project,
+named `<domain>/DHW<member>`, so the results are grouped by domain: `runs/SingleReef/DHW1/`,
+`runs/SingleReef/DHW2/`, and so on. Upload the domains first (9a step 1), check the list with
+`--dry-run`, then submit the same command without it:
+
+```bash
+cd ~/CoralModelReview
+CMR_N_SAMPLES=8 CMR_WAVE_IDX=1 CMR_CYCLONE_IDX=1 bash jobs/submit_batch.sh \
+  --domains "SingleReef ThreeReefsLine ThreeReefsRing NineReefsLine NineReefsRing" --dhw "1 2 17" --dry-run
+```
+
+Check the completion of the jobs
+
+```bash
+cd ~/CoralModelReview && bash jobs/batch_status.sh
+```
+
+Download the folders
+
+```bash
+rsync -avP --include='coralblox/run/***' --exclude='*/run/' --exclude='*/warmup/' $HPC:~/CoralModelReview/runs/{SingleReef,ThreeReefsLine,ThreeReefsRing,NineReefsLine,NineReefsRing} "/mnt/c/Users/vhaller/OneDrive - Australian Institute of Marine Science/DecisionSupport/CoralModelReview/ModelRuns/"
+```
+
+- Every listed domain gets every listed DHW member. For different members per domain, run it once per
+  group of domains.
+- Every `CMR_*` variable in your shell applies to all projects; `--engines "..."` and the other
+  `submit_all.sh` options are passed on.
+- The synthetic domains (SyntheticReefDomain.jl) have 51 DHW members: 1 is all zero (no heat stress),
+  2-51 are random draws. Their median-severity members: SingleReef 17, ThreeReefsLine/Ring 46,
+  NineReefsLine/Ring 31. Their cyclone data is all zero.
+- Each project is 7 jobs. Every ReefMod job holds one MATLAB licence while it runs, so a large batch can
+  start more MATLABs than there are licence seats (the ReefMod runs then fail with a licence error).
+  If that happens, leave ReefMod out with `--engines "coralblox cscape coralpop kora corset"` and
+  submit it in smaller batches with `--engines reefmod --no-analyse`, then re-run the analysis (6d).
+- Retrieve a whole domain at once (7's command with the domain folder as the source):
+  `rsync -avP --exclude='*/run/' --exclude='*/warmup/' $HPC:~/CoralModelReview/runs/SingleReef/ "$DEST/SingleReef/"`.
+  To re-analyse one on the laptop, set `CMR_PROJECT_NAME=SingleReef/DHW2`.
 
 ---
 
@@ -429,15 +545,19 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 
 | Symptom | Cause / fix |
 |---|---|
-| `sbatch: error: ... account` | Add `#SBATCH --account=...` to the job scripts. None was needed on `hpc-h001` so far. |
+| `sbatch: error: ... account` | Add `#SBATCH --account=...` to the job scripts. None was needed on `hpc-l001` so far. |
 | `ERROR: image not found` | Upload the `.sif`, or set `SIF=`. |
 | ReefMod: `matlab exited with code ...` mentioning missing `lib*.so` | A MATLAB system library is missing from the image. Add it to `coral_engines.def`'s apt list and rebuild, or use the fallback (6e). `container ldd $MATLAB_ROOT/bin/glnxa64/MATLAB \| grep "not found"` (after `source jobs/common.sh; setup_matlab`) lists what is missing. |
 | ReefMod: licence error / "Cannot find a valid license" | Is the licence server reachable from compute nodes? Check `MLM_LICENSE_FILE`/`LM_LICENSE_FILE` after `module load matlab` (preflight prints them). They pass into the container unchanged; a licence *file* outside the MATLAB folder is bound automatically by `setup_matlab`. |
+| Trying a ReefMod-GBR fix without rebuilding | Re-stage (or rsync the clone into `~/coral-build/upload/reefmod_host/ReefMod-GBR/`), upload `reefmod_host/` (5), and prefix the command with `REEFMOD_GBR_DIR=$HOME/CoralModelReview/reefmod_host/ReefMod-GBR SINGULARITY_BIND=$HOME/CoralModelReview/reefmod_host`. Only the MATLAB side changes; rebuild before the real run so the image records what ran. |
+| ReefMod: "Index in position 3 exceeds array bounds. Index must not exceed 100" in `settings_GBR_NEW` | The image's ReefMod-GBR lacks `LOCAL_CHANGES.md` item 7 (ADRIA's seed used as the cyclone-series index). Re-stage and rebuild, or use the row above. |
 | ReefMod: "Unrecognized field name 'doing_cooling'" | The image was built from a ReefMod-GBR without commit `9be6b5c`. Re-stage and rebuild. |
 | `Read-only file system` writing under `/opt/...` | A script wrote outside `CMR_MODEL_RUNS_DIR`. Check that `CMR_MODEL_RUNS_DIR` points into a bound folder (the jobs set it). |
 | Julia recompiles at job start, or fails writing `~/.julia_coral` | The HPC CPU isn't covered by the image's `JULIA_CPU_TARGET`, or the home quota is full. A one-off recompile into `~/.julia_coral` is harmless. |
 | `OutOfMemory` / job `OUT_OF_MEMORY` in `sacct` | Raise `--mem` for that engine in `submit_all.sh`. C~scape needs the most on bigger domains; Kora needs ~3 GB on the Test domain (more if its section size is raised). |
+| `IOError: rm(".../warmup/...): directory not empty (ENOTEMPTY)`, mostly CoralBlox | The warm-up's result files were still open when `08` deleted them; on the HPC's NFS home they survive as `.nfs*` files. Fixed in `08` from 2026-10-08 (it collects them first and never fails over this). With an older image, re-run that engine with the fixed `08_RUN_ENGINE.jl` bound over the image's: upload it to `~/CoralModelReview/patches/`, `export SINGULARITY_BIND=$HOME/CoralModelReview/patches/08_RUN_ENGINE.jl:/opt/coral/Code/08_RUN_ENGINE.jl`, then `bash jobs/submit_all.sh <project> --engines coralblox` with the project's settings. |
 | `$'\r': command not found` | A script has Windows line endings. Re-stage (it strips them), or run `sed -i 's/\r$//' jobs/*`. |
+| 09: "The engines ran on the domain `...`, but ... is a different folder" | 09 can't find the domain the engines ran on, usually after copying results to another machine. Set `CMR_DOMAIN_PATH` to a copy of that domain's folder (same folder name). |
 | 09: "were run with different settings" | Two engines in one project were run with different `CMR_*` settings. Re-run the odd one out, or use separate projects. |
 | A figure missing from `images/` | It failed. `FIGURES.md` lists failed figures with the error, and the other figures are still written. |
 | `DHW_IDX=... is outside this domain's 1:50 DHW members` | The Test domain has 50 members (the Moore domain's 64 does not exist here). |
@@ -477,6 +597,7 @@ All scripts read `CMR_<NAME>` environment variables; defaults are in `engine_con
 | `jobs/preflight.sh` | HPC login | one-time checks |
 | `jobs/reefmod_check.sh` | HPC compute (srun) | first real-MATLAB ReefMod run and its inspection |
 | `jobs/submit_all.sh` | HPC login | submits the engine jobs plus the analysis |
+| `jobs/submit_batch.sh` | HPC login | `submit_all.sh` for every domain × DHW member, as projects `<domain>/DHW<member>` (9c) |
 | `jobs/run_engine.slurm` | HPC compute | one engine (`ENGINE=...`) |
 | `jobs/analyse.slurm` | HPC compute | `collect_benchmarks.sh` then `09` |
 | `jobs/collect_benchmarks.sh` | HPC | `sacct` for the project's jobs into `slurm_accounting.csv` |

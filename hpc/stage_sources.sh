@@ -12,7 +12,7 @@
 #           Code/                         this repo, Project/Manifest [sources] rewritten to ../repos/<name>
 #           data/Test_domain/             the ADRIA Test domain (folder name must stay Test_domain)
 #           data/cscape_demog/            C~scape's six converted demog_julia_* files
-#           data/calibrated_params.nc     only if CALIB_SRC is set
+#           data/calibrated_params.nc     the CoralBlox calibration (CALIB_SRC; required)
 #           STAGED_SOURCES.md             branch / commit / uncommitted-changes per repo
 #           patches/<repo>.patch          the uncommitted changes themselves, for repos that have any
 #       upload/                           what goes to the HPC besides the .sif (see RUNNING_ON_HPC.md)
@@ -27,7 +27,9 @@ CODE_SRC="${CODE_SRC:-$(cd "$HERE/.." && pwd)}"
 GITHUB_SRC="${GITHUB_SRC:-/mnt/c/Users/vhaller/Documents/GitHub}"
 DOMAIN_SRC="${DOMAIN_SRC:-$GITHUB_SRC/ADRIA.jl/ADRIA/test/data/Test_domain}"
 DEMOG_SRC="${DEMOG_SRC:-$GITHUB_SRC/CscapeInterface.jl/sandbox/ADRIAIntegration/projects/AdjustedRecruitment10_Disturbance/data}"
-CALIB_SRC="${CALIB_SRC:-}"
+# The 2026-08-11 CoralBlox calibration. Required: without it ADRIA silently falls back to its built-in
+# parameters (every run before 2026-10-12 did, by mistake). engines.jl picks the baked-in copy up by itself.
+CALIB_SRC="${CALIB_SRC:-/mnt/c/Users/vhaller/Australian Institute of Marine Science/AIMS Decision Support - General/01_PROJECTS/RRAP M&DS/ADRIA/ADRIA Domain data/CoralBlox-ADRIA GBR Calibrated Parameters/2026-08-11/calibrated_params.nc}"
 BUILD_DIR="${BUILD_DIR:-$HOME/coral-build}"
 
 REPOS=(ADRIA.jl ADRIAIndicators.jl CScape.jl CscapeInterface.jl CoralPopInterface.jl CoralPop-Engine
@@ -47,6 +49,7 @@ strip_cr() { find "$@" -type f \( -name '*.sh' -o -name '*.slurm' -o -name '*.de
 for d in "$CODE_SRC" "$GITHUB_SRC" "$DOMAIN_SRC" "$DEMOG_SRC"; do
     [ -d "$d" ] || { echo "ERROR: not found: $d" >&2; exit 1; }
 done
+[ -f "$CALIB_SRC" ] || { echo "ERROR: CoralBlox calibration not found: $CALIB_SRC (set CALIB_SRC)" >&2; exit 1; }
 [ "$(basename "$DOMAIN_SRC")" = "Test_domain" ] || echo "NOTE: domain folder is $(basename "$DOMAIN_SRC"); CMR_DOMAIN_PATH must point at it."
 
 echo "Staging into $BUILD_DIR"
@@ -122,14 +125,12 @@ mkdir -p "$BUILD_DIR/coral/data/cscape_demog"
 cp -f "$DEMOG_SRC"/demog_julia_*.rds "$BUILD_DIR/coral/data/cscape_demog/"
 n_demog=$(ls "$BUILD_DIR/coral/data/cscape_demog"/demog_julia_*.rds | wc -l)
 [ "$n_demog" -ge 6 ] || { echo "ERROR: expected 6 demog_julia_*.rds in $DEMOG_SRC, found $n_demog" >&2; exit 1; }
-if [ -n "$CALIB_SRC" ]; then
-    cp -f "$CALIB_SRC" "$BUILD_DIR/coral/data/calibrated_params.nc"
-    echo "    CoralBlox calibration staged (use CMR_CALIBRATION_PATH=/opt/coral/data/calibrated_params.nc)"
-fi
+cp -f "$CALIB_SRC" "$BUILD_DIR/coral/data/calibrated_params.nc"
+echo "    CoralBlox calibration staged ($(sha256sum "$BUILD_DIR/coral/data/calibrated_params.nc" | cut -c1-12)...; engines.jl uses it by default)"
 {
     echo
     echo "Data: domain \`$(basename "$DOMAIN_SRC")\` from \`$DOMAIN_SRC\`; $n_demog C~scape demography files from \`$DEMOG_SRC\`."
-    [ -n "$CALIB_SRC" ] && echo "CoralBlox calibration: \`$CALIB_SRC\`."
+    echo "CoralBlox calibration: \`$CALIB_SRC\` (sha256 $(sha256sum "$BUILD_DIR/coral/data/calibrated_params.nc" | cut -c1-16)...)."
 } >> "$SRCMD"
 
 # ---- the definition file and the HPC upload folder ----

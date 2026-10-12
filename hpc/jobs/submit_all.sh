@@ -36,7 +36,11 @@ N_SAMPLES="${CMR_N_SAMPLES:-8}"
 mkdir -p "$RUNS/$PROJECT" "$CMR_BASE/logs"
 cd "$CMR_BASE/logs"
 JOBS_FILE="$RUNS/$PROJECT/jobs.txt"
-: > "$JOBS_FILE"
+# Keep the ids of engines not being (re-)submitted now, so a later analysis still collects their Slurm
+# accounting; drop the ones being replaced (reefmod_A/B/C count as reefmod) and the old analysis.
+touch "$JOBS_FILE"
+awk -v e=" $ENGINES " '{ k = $1; sub(/_[ABC]$/, "", k) } !(index(e, " " k " ") || $1 == "analyse")' \
+    "$JOBS_FILE" > "$JOBS_FILE.tmp" && mv "$JOBS_FILE.tmp" "$JOBS_FILE"
 
 # Per-engine resources for the serial test run (1 CPU each). Memory/time are generous first guesses
 # for the 10-site Test domain; the run's own benchmarks (K_benchmarks) tell you what to request next.

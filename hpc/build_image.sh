@@ -10,7 +10,7 @@ set -euo pipefail
 
 BUILD_DIR="${BUILD_DIR:-$HOME/coral-build}"
 SIF="$BUILD_DIR/coral_engines.sif"
-HPC="${HPC:-hpc-h001}"                      # ssh host of the AIMS cluster; override as user@host
+HPC="${HPC:-vhaller@hpc-l001.aims.gov.au}"  # ssh login of the AIMS cluster; override as user@host
 HPC_BASE="${HPC_BASE:-CoralModelReview}"    # relative to your HPC home
 
 command -v apptainer >/dev/null || {
@@ -46,9 +46,9 @@ Image ready. Upload to the HPC (see RUNNING_ON_HPC.md, section 5):
 
   ssh $HPC "mkdir -p ~/$HPC_BASE/{runs,logs,jobs}"
   rsync -avP $SIF $SIF.sha256 $HPC:~/$HPC_BASE/
-  rsync -avP $BUILD_DIR/upload/jobs/ $HPC:~/$HPC_BASE/jobs/
+  rsync -avP --chmod=go-w $BUILD_DIR/upload/jobs/ $HPC:~/$HPC_BASE/jobs/
   rsync -avP $BUILD_DIR/upload/STAGED_SOURCES.md $HPC:~/$HPC_BASE/
 
 Only for the fallback ReefMod route (host MATLAB outside the container):
-  rsync -avP $BUILD_DIR/upload/reefmod_host/ $HPC:~/$HPC_BASE/reefmod_host/
+  rsync -avP --chmod=go-w $BUILD_DIR/upload/reefmod_host/ $HPC:~/$HPC_BASE/reefmod_host/
 EOF
