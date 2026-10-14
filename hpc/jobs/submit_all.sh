@@ -4,7 +4,7 @@
 #   cd ~/CoralModelReview && bash jobs/submit_all.sh TestDomain_N8
 #
 # Options:
-#   --engines "kora corset"   only these engines (default: all six)
+#   --engines "kora corset"   only these engines (default: all seven)
 #   --reefmod-fallback        run ReefMod with host MATLAB outside the container (3-stage pipeline:
 #                             reefmod_A/B/C) instead of inside it -- see RUNNING_ON_HPC.md section 6e
 #   --no-analyse              don't submit the analysis job
@@ -19,7 +19,7 @@ source "${CMR_BASE:-$HOME/CoralModelReview}/jobs/common.sh"
 
 PROJECT="${1:?usage: submit_all.sh PROJECT [--engines \"...\"] [--reefmod-fallback] [--no-analyse]}"
 shift
-ENGINES="coralblox cscape coralpop kora corset reefmod"
+ENGINES="coralblox cscape coralpop kora corset reefmod coconet"
 FALLBACK=0
 ANALYSE=1
 while [ $# -gt 0 ]; do
@@ -55,6 +55,7 @@ resources() {
         kora)      echo "--mem=8G  --time=02:00:00" ;;
         corset)    echo "--mem=8G  --time=02:00:00" ;;
         reefmod)   echo "--mem=16G --time=12:00:00" ;;
+        coconet)   echo "--mem=8G  --time=01:00:00" ;;
     esac
 }
 

@@ -6,8 +6,9 @@ and `09_ANALYSE_SIX_ENGINES.jl` (load every engine's saved output and compare).
 
 The run/load logic is lifted from `06_RUNNING_A_NEW_PROJECT.jl` (CoralBlox, C~scape) and
 `07_COMPARE_SIX_ENGINES.jl` (CoralPop, Kora, CORSET, ReefMod) rather than rewritten, so an engine
-here is driven exactly the way those scripts drive it. What is new: every engine writes to its OWN
-folder, so the six can run as six independent jobs without touching each other's files:
+here is driven exactly the way those scripts drive it; CoCoNet (added 2026-10-14) follows CoralPop's
+pattern. What is new: every engine writes to its OWN folder, so the seven can run as independent jobs
+without touching each other's files:
 
     ModelRuns/<project>/<engine>/
         result.jld2 (or result_path.txt for CoralBlox's ADRIA result store)
@@ -19,7 +20,7 @@ folder, so the six can run as six independent jobs without touching each other's
 Configuration is read from `CMR_<NAME>` environment variables (see `engine_config`), with defaults
 that work both inside the HPC container (`/opt/coral/...`) and on this Windows machine.
 
-This file sets the Python (CoralPop) and MATLAB (ReefMod) environment variables BEFORE loading any
+This file sets the Python (CoralPop, CoCoNet) and MATLAB (ReefMod) environment variables BEFORE loading any
 package -- PythonCall reads them at load time and Distributed workers inherit them -- so include it
 before any `using` of the engine packages.
 =#
@@ -40,6 +41,8 @@ haskey(ENV, "JULIA_PYTHONCALL_EXE") || (ENV["JULIA_PYTHONCALL_EXE"] = _first_exi
     "/opt/pyenv/bin/python", raw"C:\Users\vhaller\.julia\conda\3\x86_64\envs\coral\python.exe"))
 haskey(ENV, "CORALPOP_ENGINE_DIR") || (ENV["CORALPOP_ENGINE_DIR"] = _first_existing(
     "/opt/coral/repos/CoralPop-Engine", raw"C:\Users\vhaller\Documents\GitHub\CoralPop-Engine"))
+haskey(ENV, "COCONET_DIR") || (ENV["COCONET_DIR"] = _first_existing(
+    "/opt/coral/repos/CoCoNet-python", raw"C:\Users\vhaller\Documents\GitHub\CoCoNet-python"))
 haskey(ENV, "REEFMOD_MATLAB_EXE") || (ENV["REEFMOD_MATLAB_EXE"] = "matlab")
 haskey(ENV, "REEFMOD_GBR_DIR") || (ENV["REEFMOD_GBR_DIR"] = _first_existing(
     "/opt/coral/repos/ReefMod-GBR", raw"C:\Users\vhaller\Documents\GitHub\ReefMod-GBR"))
@@ -49,7 +52,7 @@ haskey(ENV, "REEFMOD_GBR_DIR") || (ENV["REEFMOD_GBR_DIR"] = _first_existing(
 haskey(ENV, "CSCAPE_STRICT_DEMOGRAPHY") || (ENV["CSCAPE_STRICT_DEMOGRAPHY"] = "true")
 
 using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface,
-      DataFrames, Statistics, Printf, Dates, Random
+      CoCoNetInterface, DataFrames, Statistics, Printf, Dates, Random
 import CScape, JLD2, XLSX, MAT
 
 # =============================================================================
@@ -113,6 +116,12 @@ function engine_config()
         ## true: CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own
         ## through the diagonal), as CoralBlox and C~scape do, instead of their own retention/self-seeding.
         larvae_via_connectivity=_cfg("LARVAE_VIA_CONNECTIVITY", "false") == "true",
+        ## CoCoNet: distance offshore of every reef in km (its growth slows near the coast), or "coastline" for
+        ## CoCoNet's own distance from the domain's coordinates; its ocean-acidification growth penalty (no
+        ## other engine has one); its crown-of-thorns starfish + fish (ReefMod's CoTS are off too).
+        coconet_km_offshore=(v = _cfg("COCONET_KM_OFFSHORE", "50"); v == "coastline" ? nothing : parse(Float64, v)),
+        coconet_ocean_acidification=_cfg("COCONET_OCEAN_ACIDIFICATION", "false") == "true",
+        coconet_cots=_cfg("COCONET_COTS", "false") == "true",
     )
 end
 
@@ -128,6 +137,8 @@ function settings_dict(cfg, years)::Dict{String,Any}
         "CORSET_USE_CYCLONES_AS_HURRICANES" => cfg.corset_use_cyclones,
         "LARVAE_VIA_CONNECTIVITY" => cfg.larvae_via_connectivity,
         "CORALPOP_MORPH_GROUPS" => string(CORALPOP_MORPH_ADRIA_GROUPS),
+        "COCONET_KM_OFFSHORE" => something(cfg.coconet_km_offshore, "coastline"),
+        "COCONET_OCEAN_ACIDIFICATION" => cfg.coconet_ocean_acidification, "COCONET_COTS" => cfg.coconet_cots,
         "HOST" => gethostname(), "DATE" => string(now()),
     )
 end
@@ -137,7 +148,7 @@ end
 const FAIRNESS_KEYS = ("DOMAIN_NAME", "RCP", "DHW_IDX", "WAVE_IDX", "CYCLONE_IDX", "YEAR_START", "YEAR_END")
 
 # =============================================================================
-# The six engines
+# The engines
 # =============================================================================
 
 ## key => (label, colour, functional-group labels). Colours match 07 (Okabe-Ito).
@@ -148,14 +159,17 @@ const ENGINE_INFO = Dict(
     :kora => (label="Kora", color="#CC79A7", groups=KORA_GROUPS),
     :corset => (label="CORSET", color="#E69F00", groups=CORSET_GROUPS),
     :reefmod => (label="ReefMod", color="#56B4E9", groups=REEFMOD_GROUPS),
+    ## Okabe-Ito has no 7th colour that reads on white (its yellow doesn't): Paul Tol's wine.
+    :coconet => (label="CoCoNet", color="#882255", groups=COCONET_GROUPS),
 )
-const ENGINE_ORDER = [:coralblox, :cscape, :coralpop, :kora, :corset, :reefmod]
+const ENGINE_ORDER = [:coralblox, :cscape, :coralpop, :kora, :corset, :reefmod, :coconet]
 
 """
 Which of ADRIA's 5 functional groups each engine-native group maps onto (indices into
 `ADRIA.functional_group_names()`), reusing each interface's own translation table -- the same mapping
 its domain translator uses for initial cover. CORSET's brooding/spawning split has no morphological
-counterpart, so it is left out of the harmonised taxa figure.
+counterpart, so it is left out of the harmonised taxa figure. CoCoNet's thermally tolerant group (`tt`,
+intervention-only, always zero here) maps onto nothing.
 """
 const ADRIA_GROUP_MAP = Dict(
     :coralblox => [[g] for g in 1:5],
@@ -163,6 +177,7 @@ const ADRIA_GROUP_MAP = Dict(
     :cscape => [[g] for g in CscapeInterface.CSCAPE_FT_TO_ADRIA_GROUP],
     :coralpop => CORALPOP_MORPH_ADRIA_GROUPS,
     :reefmod => [[g] for g in REEFMOD_ADRIA_GROUPS],
+    :coconet => COCONET_ADRIA_GROUPS,
 )
 
 engine_dir(project::AbstractString, key::Symbol) = mkpath(joinpath(model_run_dir(project), String(key)))
@@ -296,6 +311,7 @@ function make_spec(key::Symbol, dom_fixed, cfg, years, cscape_dir)::DataFrame
     key === :kora && return kora_spec(; rcp, year_start=ys, year_end=ye)
     key === :corset && return corset_spec(; rcp, year_start=ys, year_end=ye)
     key === :reefmod && return reefmod_spec(; rcp, year_start=ys, year_end=ye)
+    key === :coconet && return coconet_spec(; rcp, year_start=ys, year_end=ye)
     error("Unknown engine :$key -- expected one of $(ENGINE_ORDER).")
 end
 
@@ -346,6 +362,12 @@ function run_engine(key::Symbol, dom, dom_fixed, scens::DataFrame, spec, out::Ab
     elseif key === :reefmod
         return ADRIA.run_scenarios(dom, scens, cfg.rcp, :reefmod;
             reefmod_fpath=out, dhw_idx=cfg.dhw_idx, n_workers=cfg.n_workers, spec, keep_raw=true)
+    elseif key === :coconet
+        return ADRIA.run_scenarios(dom, scens, cfg.rcp, :coconet;
+            coconet_fpath=out, dhw_idx=cfg.dhw_idx, wave_idx=cfg.wave_idx, cyclone_idx=cfg.cyclone_idx,
+            n_workers=cfg.n_workers, spec, keep_raw=true,
+            translator_kwargs=(; km_offshore=cfg.coconet_km_offshore,
+                ocean_acidification=cfg.coconet_ocean_acidification, cots=cfg.coconet_cots))
     end
     error("Unknown engine :$key")
 end
@@ -369,6 +391,8 @@ function save_engine_result(key::Symbol, rs, dir::AbstractString)
         save_corset_results(rs, f)
     elseif key === :reefmod
         save_reefmod_results(rs, f)
+    elseif key === :coconet
+        save_coconet_results(rs, f)
     end
     return nothing
 end
@@ -392,6 +416,7 @@ function load_engine_result(key::Symbol, dir::AbstractString, years)
     key === :kora && return load_kora_results(f)
     key === :corset && return load_corset_results(f)
     key === :reefmod && return load_reefmod_results(f)
+    key === :coconet && return load_coconet_results(f)
     error("Unknown engine :$key")
 end
 
@@ -457,7 +482,7 @@ _habitable_area(rs) = sum(ADRIA.loc_k_area(rs))
     extract_size_structure(key, rs, run_dir, dom, cfg, scens) -> Dict or nothing
 
 Read each scenario's raw output (or CoralBlox's cover log) into the common format above. `nothing`
-for CORSET (no size structure). Engine-specific array layouts are documented inline; any failure is
+for CORSET and CoCoNet (no size structure). Engine-specific array layouts are documented inline; any failure is
 reported and returns `nothing` rather than failing the run.
 """
 function extract_size_structure(key::Symbol, rs, run_dir::AbstractString, dom, cfg, scens::DataFrame)
@@ -575,13 +600,14 @@ end
 # thermal_tolerance.jld2 holds
 #   "years"         [T]
 #   "groups"        [G]          the engine's own group labels
-#   "scale"                      "absolute DHW" (CoralBlox, Kora: the DHW a colony tolerates) or
+#   "scale"                      "absolute DHW" (CoralBlox, Kora, CoCoNet: the DHW a colony tolerates) or
 #                                "offset DHW" (C~scape, ReefMod: shift from the population's mean response, 0 at the start)
 #   "mean"          [T, G, S]    domain-level mean tolerance per group (weighted as "weighting" says)
 #   "weight"        [T, G, S]    each group's weight in the pooled mean / distribution
 #   "x"             [K]          tolerance grid (bin centres, the engine's own scale), "dx" its spacing
 #   "density"       [T, K, S]    pooled distribution (all groups and locations), share per grid cell (sums to 1)
-#   "density_kind"               "native classes" (C~scape) or "mixture of normals" (the others)
+#   "density_kind"               "native classes" (C~scape), "site values" (CoCoNet: one value per site and
+#                                group, no spread within) or "mixture of normals" (the others)
 #   "weighting"                  what weights locations / groups (for the captions)
 #   "limits"        [2]          the engine's lower / upper bound on the scale, NaN where there is none
 # CoralPop (acclimation only) and CORSET (no tolerance) have none.
@@ -605,7 +631,7 @@ _wmean(v, w) = (W = sum(w); W > 0 ? sum(v .* w) / W : NaN)
 
 The thermal-tolerance distribution through time in the common format above, from the engine's own logs
 or raw output. `nothing` for CoralPop/CORSET, or when the run did not record tolerance (CoralBlox
-before `ADRIA_LOG_DHW_TOLS`, Kora before `KoraOutput.dhw_tol`, C~scape without raw arrays). Failures
+before `ADRIA_LOG_DHW_TOLS`, Kora before `KoraOutput.dhw_tol`, C~scape/CoCoNet without raw output). Failures
 are reported and return `nothing`, as for the size structure.
 """
 function extract_thermal_tolerance(key::Symbol, rs, run_dir::AbstractString, dom, cfg, scens::DataFrame)
@@ -614,6 +640,7 @@ function extract_thermal_tolerance(key::Symbol, rs, run_dir::AbstractString, dom
         key === :kora && return _kora_thermal(rs)
         key === :cscape && return _cscape_thermal(rs, run_dir, dom, cfg, scens)
         key === :reefmod && return _reefmod_thermal(rs, run_dir)
+        key === :coconet && return _coconet_thermal(rs, run_dir)
     catch err
         @warn "Could not extract $(ENGINE_INFO[key].label)'s thermal tolerance; the thermal figures will skip it" exception = (err, catch_backtrace())
     end
@@ -754,6 +781,45 @@ function _reefmod_thermal(rs, run_dir)
         "x" => x, "dx" => 0.25, "density" => cat(dens...; dims=3), "density_kind" => "mixture of normals",
         "weighting" => "egg volume of gravid colonies, per reef x group (as ReefMod records it)",
         "limits" => [-8.0, 8.0])
+end
+
+## CoCoNet: CoCoNetOutput.thermal [T, 6, L], the reef mean of each group's tolerance threshold (DHW). Each site
+## holds one value per group: bleaching raises it ((1 + adaptability)^mortality, capped at the group's
+## starting value + 8), it decays back over ~10 years, and recruits carry their source site's. The
+## "distribution" is the cover-weighted histogram of these reef x group values (no spread within a reef).
+## Weights: the group's cover x the reef's habitable area. Raw paths recorded on another machine fall back
+## to the same file names under run_dir/model_outputs.
+function _coconet_thermal(rs, run_dir)
+    paths = [isfile(p) ? p : joinpath(run_dir, "model_outputs", basename(p)) for p in rs.raw_output_paths]
+    (isempty(paths) || !all(isfile, paths)) && return nothing
+    x = collect(0.0:0.25:16.0)
+    edges = vcat(x .- 0.125, x[end] + 0.125)
+    means, weights, dens = Array{Float64,2}[], Array{Float64,2}[], Array{Float64,2}[]
+    for p in paths
+        o = load_coconet_output(p)
+        T, G, L = size(o.thermal)
+        w = o.cover .* reshape(o.k .* o.reef_area_m2, 1, 1, L)                         # m^2 of cover
+        mg, wg, d = zeros(T, G), zeros(T, G), zeros(T, length(x))
+        for t in 1:T
+            for g in 1:G
+                wg[t, g] = sum(w[t, g, :])
+                mg[t, g] = _wmean(o.thermal[t, g, :], w[t, g, :])
+            end
+            for g in 1:G, l in 1:L
+                w[t, g, l] > 0 || continue
+                d[t, clamp(searchsortedlast(edges, o.thermal[t, g, l]), 1, length(x))] += w[t, g, l]
+            end
+            s = sum(d[t, :])
+            s > 0 && (d[t, :] ./= s)
+        end
+        push!(means, mg); push!(weights, wg); push!(dens, d)
+    end
+    o1 = load_coconet_output(paths[1])
+    return Dict("years" => o1.years, "groups" => ENGINE_INFO[:coconet].groups,
+        "scale" => "absolute DHW", "mean" => cat(means...; dims=3), "weight" => cat(weights...; dims=3),
+        "x" => x, "dx" => 0.25, "density" => cat(dens...; dims=3), "density_kind" => "site values",
+        "weighting" => "cover x habitable area, per reef x group (one tolerance per site and group, no spread within)",
+        "limits" => [1.0, NaN])
 end
 
 # =============================================================================

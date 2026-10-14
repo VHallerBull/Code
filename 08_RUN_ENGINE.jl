@@ -1,9 +1,9 @@
 #=
 08_RUN_ENGINE.jl -- run ONE coral engine on the shared ADRIA domain and save everything `09` needs.
 
-    julia +1.12 --project=. 08_RUN_ENGINE.jl <engine>        # engine: coralblox cscape coralpop kora corset reefmod
+    julia +1.12 --project=. 08_RUN_ENGINE.jl <engine>        # engine: coralblox cscape coralpop kora corset reefmod coconet
 
-One engine per invocation, so each can be its own HPC job (see `hpc/RUNNING_ON_HPC.md`): the six
+One engine per invocation, so each can be its own HPC job (see `hpc/RUNNING_ON_HPC.md`): the seven
 write to separate `ModelRuns/<project>/<engine>/` folders and never touch each other's files. The
 per-engine code (factor specs, the run call, saving, size-structure extraction) is in `engines.jl`
 and is lifted from 06/07, so an engine runs here exactly as it does there.
@@ -21,6 +21,8 @@ The ones you are most likely to change:
     CMR_MODEL_RUNS_DIR where ModelRuns/ is (the HPC jobs point it outside the read-only image)
 
 ReefMod additionally needs `matlab` reachable (`REEFMOD_MATLAB_EXE`, default `matlab` on PATH).
+CoCoNet: CMR_COCONET_KM_OFFSHORE (default 50, or `coastline`), CMR_COCONET_OCEAN_ACIDIFICATION and
+CMR_COCONET_COTS (both default false); the local CoCoNet clone is found through COCONET_DIR.
 
 Benchmarks (`<engine>/benchmark.csv`, one row):
     t_load_s        loading the packages (from process start)

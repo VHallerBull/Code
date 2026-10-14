@@ -1,5 +1,6 @@
 #=
-09_ANALYSE_SIX_ENGINES.jl -- the full six-engine comparison, from what `08_RUN_ENGINE.jl` saved.
+09_ANALYSE_SIX_ENGINES.jl -- the full engine comparison (seven engines since CoCoNet was added on
+2026-10-14; the file name is kept for the HPC jobs), from what `08_RUN_ENGINE.jl` saved.
 
     julia +1.12 --project=. 09_ANALYSE_SIX_ENGINES.jl
 
@@ -23,7 +24,8 @@ Sections
     I  sensitivity   PAWN / TSA / outcome maps per engine (illustrative at small N)
     J  corset        CORSET's algae and consumer state
     K  benchmarks    load / first-result / per-scenario time, CPU time, peak memory, disk
-    L  thermal       heritable thermal tolerance (CoralBlox, C~scape, Kora, ReefMod): mean shift and distribution over time
+    L  thermal       heritable thermal tolerance (CoralBlox, C~scape, Kora, ReefMod, CoCoNet): mean shift and distribution over time
+    M  coconet       CoCoNet's rubble, the DHW it applied, CoTS when simulated
 
 Each figure is made independently: one that fails is reported in FIGURES.md and the console, and the
 rest are still written. Engine identity is colour + line style + marker throughout (the palette's
@@ -94,7 +96,8 @@ struct Engine
 end
 
 const STYLE = Dict(:coralblox => (:solid, :circle), :cscape => (:dash, :rect), :coralpop => (:dot, :utriangle),
-    :kora => (:dashdot, :diamond), :corset => (:dashdotdot, :dtriangle), :reefmod => (:solid, :star5))
+    :kora => (:dashdot, :diamond), :corset => (:dashdotdot, :dtriangle), :reefmod => (:solid, :star5),
+    :coconet => (:dot, :hexagon))
 
 engines = Engine[]
 missing_engines = String[]
@@ -421,7 +424,7 @@ end
 harm = Dict(e.key => harmonised(e) for e in engines)
 const ADRIA_GROUPS = replace.(string.(ADRIA.functional_group_names()), "_" => " ")
 
-figure("D_taxa", "taxa_harmonised", "Cover per ADRIA functional group, every engine mapped onto ADRIA's 5 groups with its interface's own translation table (CoralPop's mixed morphologies split evenly across their target groups; C~scape's brooders added to corymbose non-Acropora; CORSET has no morphological groups and is not shown). An approximation, not an equivalence.") do
+figure("D_taxa", "taxa_harmonised", "Cover per ADRIA functional group, every engine mapped onto ADRIA's 5 groups with its interface's own translation table (CoralPop's mixed morphologies split evenly across their target groups; C~scape's brooders added to corymbose non-Acropora; CoCoNet's intervention-only thermally tolerant group is not mapped; CORSET has no morphological groups and is not shown). An approximation, not an equivalence.") do
     es = [e for e in engines if harm[e.key] !== missing]
     fig = Mk.Figure(; size=(1400, 700))
     for g in 1:5
@@ -494,7 +497,7 @@ function common_size_share(ss, t)
 end
 year_index(ss, yr) = argmin(abs.(ss["years"] .- yr))
 
-figure("E_size", "size_distribution", "Size distribution of every engine on common diameter classes: share of the engine's coral cover in each class (all groups pooled, median scenario) in the first, middle and last year. C~scape's and ReefMod's colony counts are converted to cover (count x area of a colony at the bin-centre diameter), so every engine is on the same basis. CoralBlox's is logged after growth, before that year's disturbance. CORSET has no size structure.") do
+figure("E_size", "size_distribution", "Size distribution of every engine on common diameter classes: share of the engine's coral cover in each class (all groups pooled, median scenario) in the first, middle and last year. C~scape's and ReefMod's colony counts are converted to cover (count x area of a colony at the bin-centre diameter), so every engine is on the same basis. CoralBlox's is logged after growth, before that year's disturbance. CORSET and CoCoNet have no size structure.") do
     isempty(size_engines) && return nothing
     fig = Mk.Figure(; size=(1500, 480))
     nk = length(SIZE_LABELS)
@@ -821,6 +824,27 @@ if corset !== nothing
 end
 
 # =============================================================================
+# M. CoCoNet extras
+# =============================================================================
+
+coconet = findfirst(e -> e.key === :coconet, engines)
+if coconet !== nothing
+    en = engines[coconet]
+    cn_extra = [(k, t) for (k, t) in ((:rubble_cover, "Rubble cover (fraction of k)"), (:dhw, "DHW applied"),
+        (:cots_density, "CoTS density (manta-tow equivalent per ha)"))
+        if haskey(en.rs.outcomes, k) && any(!iszero, Array(en.rs.outcomes[k]))]
+    figure("M_coconet", "coconet_state", "CoCoNet's own state, domain mean (median, IQR, scenarios): rubble (twice the coral killed by bleaching and cyclones, decaying over ~6 years; it blocks coral settlement), the DHW its bleaching step applied, and CoTS density when CoTS were simulated (off unless CMR_COCONET_COTS=true).") do
+        isempty(cn_extra) && return nothing
+        fig = Mk.Figure(; size=(1400, 360))
+        for (i, (k, t)) in enumerate(cn_extra)
+            ax = Mk.Axis(fig[1, i]; title=t, xlabel="Year")
+            spread!(ax, en, domain_mean(Float64.(Array(en.rs.outcomes[k]))))
+        end
+        fig
+    end
+end
+
+# =============================================================================
 # K. Benchmarks
 # =============================================================================
 
@@ -929,14 +953,14 @@ end
 # =============================================================================
 
 ## The engines with heritable tolerance; CoralPop (acclimation only) and CORSET (none) have no such state.
-const THERMAL_KEYS = (:coralblox, :cscape, :kora, :reefmod)
+const THERMAL_KEYS = (:coralblox, :cscape, :kora, :reefmod, :coconet)
 thermal = Dict{Symbol,Any}()
 thermal_missing = String[]
 for e in engines
     e.key in THERMAL_KEYS || continue
     f = joinpath(e.dir, "thermal_tolerance.jld2")
-    if !isfile(f) && e.key in (:cscape, :reefmod)
-        ## runs from before 08 saved it: C~scape's raw arrays / ReefMod's .mat files still hold it
+    if !isfile(f) && e.key in (:cscape, :reefmod, :coconet)
+        ## runs from before 08 saved it: C~scape's raw arrays / ReefMod's .mat files / CoCoNet's raw output still hold it
         tt = extract_thermal_tolerance(e.key, e.rs, joinpath(e.dir, "run"), dom, cfg,
             JLD2.load(joinpath(e.dir, "samples.jld2"), "scens"))
         tt === nothing || JLD2.save(f, tt)
@@ -973,9 +997,10 @@ const THERMAL_YEAR_COLORS = ["#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#08306
 const THERMAL_YEAR_STYLES = [:dot, :dash, :dashdot, :dashdotdot, :solid]
 const THERMAL_WEIGHTING = "CoralBlox: cover-weighted mixture of each group x size class x location's normal (mean logged after growth, SD fixed); " *
     "Kora: colony-area-weighted mixture of each group x location's normal (mean and SD); C~scape: cover in its own 14 tolerance classes (no fitted curve); " *
-    "ReefMod: gravid colonies only, egg-volume weighted, mixture of each reef x group's normal from the mean and variance it records."
+    "ReefMod: gravid colonies only, egg-volume weighted, mixture of each reef x group's normal from the mean and variance it records; " *
+    "CoCoNet: one tolerance per site and group (no spread within), so its distribution is the cover-weighted histogram of reef x group values."
 
-figure("L_thermal", "thermal_mean_shift", "Change in domain mean thermal tolerance from each engine's own first year (DHW): median (line), IQR (band) and every scenario (thin). On this scale CoralBlox/Kora (absolute tolerance thresholds) and C~scape/ReefMod (offsets from the population's mean response) compare directly. Lower panel: the domain DHW they responded to. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+figure("L_thermal", "thermal_mean_shift", "Change in domain mean thermal tolerance from each engine's own first year (DHW): median (line), IQR (band) and every scenario (thin). On this scale CoralBlox/Kora/CoCoNet (absolute tolerance thresholds) and C~scape/ReefMod (offsets from the population's mean response) compare directly. Lower panel: the domain DHW they responded to. $THERMAL_WEIGHTING$THERMAL_NOTE") do
     isempty(thermal_engines) && return nothing
     fig = Mk.Figure(; size=(1100, 700))
     ax = Mk.Axis(fig[1, 1]; ylabel="Δ mean tolerance (DHW)", title="Mean thermal tolerance, change from the first year ($MEMBER)")
@@ -992,14 +1017,14 @@ figure("L_thermal", "thermal_mean_shift", "Change in domain mean thermal toleran
     fig
 end
 
-figure("L_thermal", "thermal_distribution_over_time", "Each engine's thermal-tolerance distribution (all groups and locations pooled) in $(join(YEARS[THERMAL_YEAR_IDX], ", ")), light to dark, on the engine's own scale; the median scenario (by final mean shift). Dashed grey lines are the engine's bounds (ReefMod ±8, C~scape's outer classes -5 and +8, CoralBlox's lower bound 1 DHW): mass piling up there means the engine's range is limiting adaptation. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+figure("L_thermal", "thermal_distribution_over_time", "Each engine's thermal-tolerance distribution (all groups and locations pooled) in $(join(YEARS[THERMAL_YEAR_IDX], ", ")), light to dark, on the engine's own scale; the median scenario (by final mean shift). Dashed grey lines are the engine's bounds (ReefMod ±8, C~scape's outer classes -5 and +8, CoralBlox's and CoCoNet's lower bound 1 DHW): mass piling up there means the engine's range is limiting adaptation. $THERMAL_WEIGHTING$THERMAL_NOTE") do
     isempty(thermal_engines) && return nothing
     n = length(thermal_engines)
     fig = Mk.Figure(; size=(1300, 380 * cld(n, 2) + 60))
     for (i, e) in enumerate(thermal_engines)
         tt = thermal[e.key]
         s = median_scenario(tt)
-        native = tt["density_kind"] == "native classes"
+        native = tt["density_kind"] in ("native classes", "site values")              # shares per class, not a density
         ax = Mk.Axis(fig[fld1(i, 2), mod1(i, 2)]; title="$(e.label) (scenario $s)",
             xlabel=tt["scale"] == "absolute DHW" ? "Tolerance (DHW)" : "Tolerance offset (DHW)",
             ylabel=native ? "Share of cover per class" : "Density (per DHW)")
@@ -1037,7 +1062,7 @@ figure("L_thermal", "thermal_distribution_years", "The same distributions regrou
     fig
 end
 
-figure("L_thermal", "thermal_mean_native", "Mean thermal tolerance per functional group on each engine's own scale (CoralBlox, Kora: absolute DHW threshold; C~scape, ReefMod: offset from the population's mean response), median over scenarios. Groups with no cover (ReefMod: no gravid colonies) in a year are gaps. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+figure("L_thermal", "thermal_mean_native", "Mean thermal tolerance per functional group on each engine's own scale (CoralBlox, Kora, CoCoNet: absolute DHW threshold; C~scape, ReefMod: offset from the population's mean response), median over scenarios. Groups with no cover (ReefMod: no gravid colonies) in a year are gaps. $THERMAL_WEIGHTING$THERMAL_NOTE") do
     isempty(thermal_engines) && return nothing
     n = length(thermal_engines)
     fig = Mk.Figure(; size=(1400, 380 * cld(n, 2)))
@@ -1104,6 +1129,7 @@ const CAPABILITIES = [
     ("Kora", "5 ADRIA groups x 7", KORA_LARVAE, "yes", "no (no cyclone pathway)", "yes", "yes: normal per group x location, mean and SD evolve (h² = 0.3 ± 10 %)"),
     ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no", "no"),
     ("ReefMod", "6 groups, 11 bins (counts)", "yes (ADRIA's matrix)", "yes", "switched off", "provisional", "yes: offset per colony (±8 DHW), breeder's equation on gravid mean (h² = 0.3)"),
+    ("CoCoNet", "none (6 groups, cover only)", "yes (ADRIA's matrix, diagonal = self-recruitment)", "yes", "yes (via domain)", "no", "yes: one threshold per site x group, raised by bleaching mortality, decays back (~10 yr), carried by recruits"),
 ]
 
 ## A filtered run only adds (or refreshes) its own lines in the existing FIGURES.md, in the figure's section,
@@ -1141,7 +1167,7 @@ if !isempty(ONLY_FIGURES)
 end
 
 open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
-    println(io, "# Six-engine comparison: $(cfg.project)\n")
+    println(io, "# Engine comparison: $(cfg.project)\n")
     println(io, "Generated $(Dates.format(now(), "yyyy-mm-dd HH:MM")) by `09_ANALYSE_SIX_ENGINES.jl`.\n")
     println(io, "- Domain: `$(ref.settings["DOMAIN_NAME"])`, RCP $(cfg.rcp), years $(first(YEARS))-$(last(YEARS)), $NL sites")
     println(io, "- Climate: $MEMBER, cyclone member $(cfg.cyclone_idx) (domain mean DHW $(round(mean(domain_dhw); digits=2)); $(count(>(4), domain_dhw)) of $NY years above 4)")
@@ -1168,7 +1194,18 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     end
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
-    println(io, "- Thermal tolerance (L) is on two different scales: CoralBlox and Kora track the DHW a colony tolerates, C~scape and ReefMod an offset from the population's mean response (0 at the start). Only the change from the first year compares across engines. ReefMod records tolerance for gravid colonies only (egg-volume weighted), the others for all cover; C~scape's and ReefMod's ranges are bounded (+8 DHW), so a distribution pressed against that bound understates adaptation.$THERMAL_NOTE")
+    let i = findfirst(e -> e.key === :coconet, engines)
+        if i !== nothing
+            s = engines[i].settings
+            km = get(s, "COCONET_KM_OFFSHORE", "coastline")
+            println(io, "- CoCoNet: every reef ", km == "coastline" ? "at its own distance from CoCoNet's coastline" : "placed $(km) km offshore",
+                " (CoCoNet slows growth near the coast); ocean acidification ", get(s, "COCONET_OCEAN_ACIDIFICATION", false) === true ? "on" : "off",
+                "; CoTS and fish ", get(s, "COCONET_COTS", false) === true ? "on" : "off",
+                "; fishing off. Cover only (no colony sizes), so no shelter volume, juveniles or the indices built on them. ",
+                "ADRIA's connectivity replaces its dispersal kernels and ADRIA's DHW/cyclones its own event generators (see CoCoNet-python/LOCAL_CHANGES.md).")
+        end
+    end
+    println(io, "- Thermal tolerance (L) is on two different scales: CoralBlox, Kora and CoCoNet track the DHW a colony tolerates, C~scape and ReefMod an offset from the population's mean response (0 at the start). Only the change from the first year compares across engines. ReefMod records tolerance for gravid colonies only (egg-volume weighted), the others for all cover; C~scape's and ReefMod's ranges are bounded (+8 DHW), so a distribution pressed against that bound understates adaptation.$THERMAL_NOTE")
     println(io, "- Size structure (E) is compared as cover for every engine: C~scape's and ReefMod's colony counts are weighted by the area of a colony at each bin's centre diameter (approximate within a bin). Compare shapes (shares), not amounts.")
     println(io, "\n## What each engine represents here\n")
     println(io, "| Engine | Size structure | Connectivity | DHW bleaching | Cyclones | Juveniles | Heritable thermal tolerance |\n|---|---|---|---|---|---|---|")

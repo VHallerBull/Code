@@ -1,7 +1,7 @@
 # Environment for the CoralModelReview model-comparison scripts (06, 07, ...).
 # It is an environment, not a package: nothing here is loaded with `using CoralModelReviewCode`.
 #
-# The ADRIA / C~scape / CoralPop packages are LOCAL development clones under
+# The ADRIA / C~scape / CoralPop / CoCoNet packages are LOCAL development clones under
 # C:\Users\vhaller\Documents\GitHub, referenced through [sources] with paths relative to this file.
 # `julia --project=. setup_environment.jl` checks they are present and instantiates the environment.
 # SOURCES.md records which branch / commit of each clone this was last verified against.
@@ -15,6 +15,7 @@ CORSET = "3b1f6e9a-6a6a-4c2d-9f0a-7c2a1d7e4b10"
 CORSETInterface = "7d4f2c8e-9b1a-4e3f-8c5d-2a9b6e1f3d47"
 CScape = "a9cf4493-63b1-4baa-9378-c4395a88e333"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CoCoNetInterface = "e141dbf4-0ccc-4b3e-a0cc-b6bfab141592"
 CoralPopInterface = "8b521de6-7b98-4e38-9776-d64b026254f7"
 CscapeInterface = "a1b2c3d4-1234-5678-9abc-def012345678"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
@@ -40,6 +41,7 @@ ADRIAviz = {path = "../../../../Documents/GitHub/ADRIA.jl/ADRIAviz"}
 CORSET = {path = "../../../../Documents/GitHub/CORSET.jl"}
 CORSETInterface = {path = "../../../../Documents/GitHub/CORSETInterface.jl"}
 CScape = {path = "../../../../Documents/GitHub/CScape.jl"}
+CoCoNetInterface = {path = "../../../../Documents/GitHub/CoCoNetInterface.jl"}
 CoralPopInterface = {path = "../../../../Documents/GitHub/CoralPopInterface.jl"}
 CscapeInterface = {path = "../../../../Documents/GitHub/CscapeInterface.jl"}
 Kora = {path = "../../../../Documents/GitHub/Kora.jl"}

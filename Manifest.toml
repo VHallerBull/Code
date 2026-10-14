@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "89bd2e18ab162c3328d88ded2c1c5574e2dc6552"
+project_hash = "1296ff439ae8c4243e421b5a21187c6c5197988f"
 
 [[deps.ADRIA]]
 deps = ["ADRIAIndicators", "ArchGDAL", "Bootstrap", "CSV", "Clustering", "Combinatorics", "CoralBlox", "CpuId", "DataFrames", "DataStructures", "Dates", "DimensionalData", "Distances", "Distributed", "Distributions", "FileIO", "Flatten", "GDAL_jll", "GeoDataFrames", "GeoFormatTypes", "GeoInterface", "Glob", "Graphs", "ImageIO", "Interpolations", "JMcDM", "JSON", "LERC_jll", "LinearAlgebra", "Logging", "ModelParameters", "NetCDF", "OnlineStats", "OrderedCollections", "Pkg", "PkgVersion", "PrecompileTools", "Printf", "ProgressMeter", "QuasiMonteCarlo", "Random", "Reexport", "RelocatableFolders", "Serialization", "Setfield", "SimpleWeightedGraphs", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsFuns", "TOML", "YAXArrays", "Zarr"]
@@ -12,6 +12,7 @@ version = "0.17.2"
 
     [deps.ADRIA.extensions]
     ADRIACORSETExt = "CORSETInterface"
+    ADRIACoCoNetExt = "CoCoNetInterface"
     ADRIACoralPopExt = "CoralPopInterface"
     ADRIACscapeExt = "CscapeInterface"
     ADRIAKoraExt = "KoraInterface"
@@ -20,6 +21,7 @@ version = "0.17.2"
     [deps.ADRIA.weakdeps]
     BlackBoxOptim = "a134a8b2-14d6-55f6-9291-3336d3ab0209"
     CORSETInterface = "7d4f2c8e-9b1a-4e3f-8c5d-2a9b6e1f3d47"
+    CoCoNetInterface = "e141dbf4-0ccc-4b3e-a0cc-b6bfab141592"
     CoralPopInterface = "8b521de6-7b98-4e38-9776-d64b026254f7"
     CscapeInterface = "a1b2c3d4-1234-5678-9abc-def012345678"
     KoraInterface = "f2396b7f-ab6b-447e-a8d8-68bf8c91238a"
@@ -437,6 +439,12 @@ deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "Random", "S
 git-tree-sha1 = "3e22db924e2945282e70c33b75d4dde8bfa44c94"
 uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
 version = "0.15.8"
+
+[[deps.CoCoNetInterface]]
+deps = ["ADRIA", "ADRIAIndicators", "DataFrames", "Distributed", "Distributions", "JLD2", "PythonCall", "Statistics"]
+path = "../../../../Documents/GitHub/CoCoNetInterface.jl"
+uuid = "e141dbf4-0ccc-4b3e-a0cc-b6bfab141592"
+version = "0.1.0"
 
 [[deps.CodecBzip2]]
 deps = ["Bzip2_jll", "TranscodingStreams"]

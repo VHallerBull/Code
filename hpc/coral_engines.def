@@ -60,6 +60,7 @@ From: julia:1.12.5-bookworm
     export JULIA_CONDAPKG_BACKEND=Null
     export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
     export CORALPOP_ENGINE_DIR=/opt/coral/repos/CoralPop-Engine
+    export COCONET_DIR=/opt/coral/repos/CoCoNet-python
     export R_HOME=/usr/lib/R
     export JULIA_PKG_PRECOMPILE_AUTO=0
 
@@ -69,10 +70,10 @@ From: julia:1.12.5-bookworm
     # Load everything the scripts load, so every package extension (ADRIA's five engine extensions,
     # ADRIAviz's Makie extension) is precompiled too.
     xvfb-run -a julia --startup-file=no --project=/opt/coral/Code -e '
-        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface
+        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface, CoCoNetInterface
         using ADRIAanalysis, DataFrames, JLD2, MAT, XLSX, CScape
         import ADRIAviz, CairoMakie, GeoMakie, GraphMakie
-        println("engine packages ok; python: ", coralpop_python_info())
+        println("engine packages ok; python: ", coralpop_python_info(), "; coconet: ", coconet_python_info())
     '
 
     chmod -R a+rX /opt/julia_depot /opt/coral /opt/pyenv
@@ -88,6 +89,7 @@ From: julia:1.12.5-bookworm
     export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
     export PYTHONDONTWRITEBYTECODE=1
     export CORALPOP_ENGINE_DIR=/opt/coral/repos/CoralPop-Engine
+    export COCONET_DIR=/opt/coral/repos/CoCoNet-python
     export REEFMOD_GBR_DIR=/opt/coral/repos/ReefMod-GBR
     export R_HOME=/usr/lib/R
     export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
@@ -97,16 +99,16 @@ From: julia:1.12.5-bookworm
 
 %test
     julia --startup-file=no --project=/opt/coral/Code -e '
-        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface
+        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface, CoCoNetInterface
         println("coral engines OK: ", coralpop_python_info())'
 
 %labels
     Name coral_engines
     JuliaVersion 1.12.5
-    Contents CoralBlox(ADRIA) C~scape CoralPop Kora CORSET ReefMod-interface; Test_domain
+    Contents CoralBlox(ADRIA) C~scape CoralPop Kora CORSET ReefMod-interface CoCoNet; Test_domain
 
 %help
-    Six coral engines for the CoralModelReview comparison. Scripts and the Julia environment are in
+    Seven coral engines for the CoralModelReview comparison. Scripts and the Julia environment are in
     /opt/coral/Code, the engine sources in /opt/coral/repos (STAGED_SOURCES.md records their commits),
     data in /opt/coral/data. Outputs must go to a bound, writable folder: set CMR_MODEL_RUNS_DIR.
 

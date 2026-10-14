@@ -8,7 +8,7 @@
 #   ~/coral-build/
 #       coral_engines.def                 the image definition (copied from this folder)
 #       coral/                            becomes /opt/coral in the image
-#           repos/<12 engine repos>       code only: no .git, sandbox/, Outputs/, docs/
+#           repos/<14 engine repos>       code only: no .git, sandbox/, Outputs/, docs/
 #           Code/                         this repo, Project/Manifest [sources] rewritten to ../repos/<name>
 #           data/Test_domain/             the ADRIA Test domain (folder name must stay Test_domain)
 #           data/cscape_demog/            C~scape's six converted demog_julia_* files
@@ -33,7 +33,8 @@ CALIB_SRC="${CALIB_SRC:-/mnt/c/Users/vhaller/Australian Institute of Marine Scie
 BUILD_DIR="${BUILD_DIR:-$HOME/coral-build}"
 
 REPOS=(ADRIA.jl ADRIAIndicators.jl CScape.jl CscapeInterface.jl CoralPopInterface.jl CoralPop-Engine
-       Kora.jl KoraInterface.jl CORSET.jl CORSETInterface.jl ReefModInterface.jl ReefMod-GBR)
+       Kora.jl KoraInterface.jl CORSET.jl CORSETInterface.jl ReefModInterface.jl ReefMod-GBR
+       CoCoNet-python CoCoNetInterface.jl)
 
 # Never copied into the image. ReefModInterface keeps its (tiny) sandbox: the fallback ReefMod route
 # runs its 02_prepare_hpc_job.jl / 03_load_hpc_results.jl.
@@ -88,6 +89,9 @@ for r in "${REPOS[@]}"; do
     echo "  repo $r"
     extra=(--exclude=sandbox/)
     [ "$r" = "ReefModInterface.jl" ] && extra=()
+    # CoCoNet: of its 166 MB legacy/ folder (NetLogo model, GBR reef table) only the coastline is read
+    # (CMR_COCONET_KM_OFFSHORE=coastline); its JS viewers aren't needed either.
+    [ "$r" = "CoCoNet-python" ] && extra+=(--include=legacy/coastline.csv --exclude='legacy/*' --exclude=viz/ --exclude=gen-charts/ --exclude=documentation/)
     rsync -a --delete "${EXCLUDES[@]}" "${extra[@]}" "$src/" "$BUILD_DIR/coral/repos/$r/"
     record "$r" "$src"
 done
