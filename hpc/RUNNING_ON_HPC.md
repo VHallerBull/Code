@@ -518,6 +518,10 @@ Check the completion of the jobs
 cd ~/CoralModelReview && bash jobs/batch_status.sh
 ```
 
+To look only at projects (re)submitted recently, or at certain domains, add `--since` and/or names:
+`bash jobs/batch_status.sh --since 3h` (units `m`, `h`, `d`; a bare number is hours),
+`bash jobs/batch_status.sh --since 2d SingleReef NineReefsLine`.
+
 Download the folders
 
 ```bash

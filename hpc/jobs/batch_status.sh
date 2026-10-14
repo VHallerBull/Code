@@ -5,6 +5,12 @@
 #   cd ~/CoralModelReview
 #   bash jobs/batch_status.sh                          # every project
 #   bash jobs/batch_status.sh SingleReef NineReefsLine # only these domains' (or projects') folders
+#   bash jobs/batch_status.sh --since 3h               # only projects (re)submitted in the last 3 hours
+#   bash jobs/batch_status.sh --since 2d SingleReef    # ... combined with a domain list
+#
+# --since N[m|h|d] (minutes, hours or days; a bare number means hours) keeps the projects whose jobs.txt was
+# written within that time, i.e. the ones submit_all.sh / submit_batch.sh last touched, including a partial
+# re-submit of one engine.
 #
 # States: ok = COMPLETED, run = RUNNING, wait = PENDING, FAIL / OOM (out of memory) / TIMEOUT /
 # CANCEL = needs a re-run (6d), ? = not in sacct (too old, or not submitted). An engine job can be "ok"
@@ -12,8 +18,26 @@
 set -euo pipefail
 source "${CMR_BASE:-$HOME/CoralModelReview}/jobs/common.sh"
 cd "$RUNS"
-roots=("$@")
+since=""; roots=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --since) [ $# -ge 2 ] || { echo "--since needs a value, e.g. 3h" >&2; exit 2; }; since=$2; shift 2 ;;
+        --since=*) since=${1#--since=}; shift ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+        *) roots+=("$1"); shift ;;
+    esac
+done
 [ ${#roots[@]} -gt 0 ] || roots=(.)
+mins=""
+if [ -n "$since" ]; then
+    [[ $since =~ ^[0-9]+$ ]] && since=${since}h
+    [[ $since =~ ^([0-9]+)([mhd]?)$ ]] || { echo "--since: use a number with m, h or d, e.g. 90m, 3h, 2d" >&2; exit 2; }
+    case "${BASH_REMATCH[2]:-h}" in
+        m) mins=${BASH_REMATCH[1]} ;;
+        h) mins=$((BASH_REMATCH[1] * 60)) ;;
+        d) mins=$((BASH_REMATCH[1] * 1440)) ;;
+    esac
+fi
 
 short() {
     case "$1" in
@@ -53,6 +77,6 @@ while read -r f; do
         printf '%-47s %s%s%s\n' "" "scenarios: ${sc:-?}" "${miss:+; $miss}" \
             "$( [ "${nfail:-0}" -gt 0 ] && echo "; $nfail failed figure(s)" )"
     fi
-done < <(find "${roots[@]}" -name jobs.txt | sort)
+done < <(find "${roots[@]}" -name jobs.txt ${mins:+-mmin -$mins} | sort)
 
-echo "$n projects: $n_done done, $n_bad with a failed/cancelled job (re-run with: bash jobs/submit_all.sh <project> --engines <engine>, same CMR_* settings)"
+echo "$n projects${since:+ submitted in the last $since}: $n_done done, $n_bad with a failed/cancelled job (re-run with: bash jobs/submit_all.sh <project> --engines <engine>, same CMR_* settings)"
