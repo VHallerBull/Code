@@ -992,9 +992,10 @@ thermal_shift(tt) = (m = thermal_pooled_mean(tt); m .- m[1:1, :])
 "The scenario whose final shift is the median one (a real scenario, so its distribution is a real distribution)."
 median_scenario(tt) = (d = thermal_shift(tt)[end, :]; sortperm(d)[cld(length(d), 2)])
 
-const THERMAL_YEAR_IDX = unique(filter(!isnothing, [1, min(11, NY), min(26, NY), findfirst(==(2050), YEARS), NY]))
-const THERMAL_YEAR_COLORS = ["#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#08306b"]   # light (early) -> dark (late)
-const THERMAL_YEAR_STYLES = [:dot, :dash, :dashdot, :dashdotdot, :solid]
+const THERMAL_YEAR_IDX = sort(unique(filter(!isnothing, [1, min(11, NY), min(26, NY), findfirst(==(2050), YEARS), NY])))
+## light (early) -> dark (late); taken from the end, so the last year is always the darkest, solid line
+const THERMAL_YEAR_COLORS = ["#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#08306b"][(end - length(THERMAL_YEAR_IDX) + 1):end]
+const THERMAL_YEAR_STYLES = [:dot, :dash, :dashdot, :dashdotdot, :solid][(end - length(THERMAL_YEAR_IDX) + 1):end]
 const THERMAL_WEIGHTING = "CoralBlox: cover-weighted mixture of each group x size class x location's normal (mean logged after growth, SD fixed); " *
     "Kora: colony-area-weighted mixture of each group x location's normal (mean and SD); C~scape: cover in its own 14 tolerance classes (no fitted curve); " *
     "ReefMod: gravid colonies only, egg-volume weighted, mixture of each reef x group's normal from the mean and variance it records; " *
@@ -1036,7 +1037,7 @@ figure("L_thermal", "thermal_distribution_over_time", "Each engine's thermal-tol
         lim = filter(isfinite, tt["limits"])
         isempty(lim) || Mk.vlines!(ax, lim; color=:grey50, linestyle=:dash, linewidth=1)
     end
-    Mk.Legend(fig[cld(n, 2) + 1, :], [Mk.LineElement(color=c, linestyle=l, linewidth=2) for (c, l) in zip(THERMAL_YEAR_COLORS, THERMAL_YEAR_STYLES)][1:length(THERMAL_YEAR_IDX)],
+    Mk.Legend(fig[cld(n, 2) + 1, :], [Mk.LineElement(color=c, linestyle=l, linewidth=2) for (c, l) in zip(THERMAL_YEAR_COLORS, THERMAL_YEAR_STYLES)],
         string.(YEARS[THERMAL_YEAR_IDX]); orientation=:horizontal, framevisible=false)
     fig
 end
