@@ -89,7 +89,7 @@ const WARMUP_DIR = joinpath(OUT, "warmup")
 for d in (RUN_DIR, WARMUP_DIR)
     remove_dir(d; move_aside=true)
 end
-for f in ("result.jld2", "result_path.txt", "samples.jld2", "benchmark.csv", "size_structure.jld2")
+for f in ("result.jld2", "result_path.txt", "samples.jld2", "benchmark.csv", "size_structure.jld2", "thermal_tolerance.jld2")
     isfile(joinpath(OUT, f)) && rm(joinpath(OUT, f))
 end
 
@@ -135,6 +135,8 @@ JLD2.save(joinpath(OUT, "samples.jld2"), Dict(
 
 t_size = @elapsed (ss = extract_size_structure(KEY, rs, RUN_DIR, dom, cfg, scens))
 ss === nothing || JLD2.save(joinpath(OUT, "size_structure.jld2"), ss)
+t_thermal = @elapsed (tt = extract_thermal_tolerance(KEY, rs, RUN_DIR, dom, cfg, scens))
+tt === nothing || JLD2.save(joinpath(OUT, "thermal_tolerance.jld2"), tt)
 
 n = nrow(scens)
 n_locs = length(rs.loc_ids)
@@ -148,9 +150,9 @@ bench = (
     t_main_s=main_run.time_s, t_main_compile_s=main_run.compile_s, t_main_gc_s=main_run.gc_s,
     t_main_alloc_gb=main_run.alloc_gb, t_per_scen_s=main_run.time_s / n,
     t_per_scen_site_year_ms=1000 * main_run.time_s / (n * n_locs * length(YEARS)),
-    t_size_extract_s=t_size, maxrss_gb=Sys.maxrss() / 1e9, disk_gb=dir_size_gb(RUN_DIR),
+    t_size_extract_s=t_size, t_thermal_extract_s=t_thermal, maxrss_gb=Sys.maxrss() / 1e9, disk_gb=dir_size_gb(RUN_DIR),
     disk_per_scen_gb=dir_size_gb(RUN_DIR) / n, t_total_s=time() - T_PROCESS_START,
 )
 write_csv(joinpath(OUT, "benchmark.csv"), [bench])
 
-@info "$LABEL done" OUT t_main_s = round(main_run.time_s; digits=1) t_per_scen_s = round(bench.t_per_scen_s; digits=2) maxrss_gb = round(bench.maxrss_gb; digits=2) size_structure = ss !== nothing
+@info "$LABEL done" OUT t_main_s = round(main_run.time_s; digits=1) t_per_scen_s = round(bench.t_per_scen_s; digits=2) maxrss_gb = round(bench.maxrss_gb; digits=2) size_structure = ss !== nothing thermal_tolerance = tt !== nothing

@@ -406,21 +406,27 @@ diam_cm = demography[1].meshpoints_diam   # same 100-point mesh shared across fu
 plot(diam_cm, size_by_year[1, :]; label="2025", xlabel="Colony diameter (cm)", ylabel="Cover")
 plot!(diam_cm, size_by_year[end, :]; label="2099")
 
-# --- Thermal tolerance: cover-weighted mean over the heat-tolerance bins ---
-# Bins are evenly spaced and centred at 0 -- for the common 3-bin case that's [-1, 0, 1];
-# confirm your own run's bin count/centres against config.heat_tolerance before reusing this.
-n_bins = size(out_array, 5)
-bin_centres = range(-1, 1; length=n_bins)
+# --- Thermal tolerance: cover-weighted mean over the heat-tolerance classes ---
+# The classes come from the scenario's HeatToleranceGroups "<first>_<last>_<count>": "-5_8_14" gives
+# 14 DHW offsets -5, -4, ..., +8 (the file stores only their count, so build them from that string).
+# VAL_COVER is % of each site's area: weight sites by their area (the domain's loc_data.area, same order).
+bin_centres = range(-5, 8; length=14)
+@assert size(out_array, 5) == length(bin_centres)
+site_area = reshape(Float64.(dom.loc_data.area), 1, :, 1, 1)
 
-cover_by_bin = dropdims(sum(out_array[:, :, combined_idx, :, :, 1]; dims=(2, 3)); dims=(2, 3))  # [years, bins]
+cover_by_bin = dropdims(sum(out_array[:, :, combined_idx, :, :, CScape.Layout.VAL_COVER] .* site_area;
+    dims=(2, 3)); dims=(2, 3))  # [years, classes]
 weighted_tol = vec(sum(cover_by_bin .* bin_centres'; dims=2) ./ sum(cover_by_bin; dims=2))
 
 plot(years_cs, weighted_tol; label="C~scape mean thermal tolerance", lw=2)
 ```
 
 For the CoralBlox side of a thermal-tolerance comparison, `rs_cb.coral_dhw_tol_log` is already
-in DHW units (not the same scale as the bin-centred value above — compare shapes, not raw
-numbers, unless you convert one to the other).
+in DHW units, but it is an absolute tolerance threshold while C~scape's classes are offsets from
+the population's mean response: compare changes from the first year, not raw numbers. ADRIA only
+fills that log when `ENV["ADRIA_LOG_DHW_TOLS"] = "true"` is set after `ADRIA.setup()`
+(`engines.jl` does this; `09_ANALYSE_SIX_ENGINES.jl` section L compares all four engines with
+heritable tolerance this way).
 
 ---
 

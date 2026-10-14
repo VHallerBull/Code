@@ -215,6 +215,11 @@ const CSCAPE_DEMOG_NAMES = Dict(
     "brooder" => "corym_non_acro_BR", "small_massive" => "small_massive", "large_massive" => "large_massive",
 )
 const CSCAPE_FTS = ["acro_table", "acro_corym", "corym_non_acro", "small_massive", "large_massive", "brooder"]
+## C~scape's heat-tolerance classes, "<first>_<last>_<count>" (DHW offsets from the population's mean response)
+const CSCAPE_HEAT_TOLERANCE_GROUPS = "-5_8_14"
+cscape_heat_classes() = let (a, b, n) = parse.(Float64, split(CSCAPE_HEAT_TOLERANCE_GROUPS, '_'))
+    collect(range(a, b; length=Int(n)))
+end
 
 """
     cscape_demography_summary(cfg) -> String
@@ -258,7 +263,7 @@ function setup_cscape_project(dir::AbstractString, cfg, years)
         Intervention=["No"], date=[Dates.format(today(), "yyyy/mm/dd")], Region=["Offshore_Northern"],
         Year_Start=[first(years)], Year_End=[last(years)],
         init_cover=["0.1_0.1_0.1_0.1_0.1_0.1"],                     # placeholder: domain translation supplies it
-        fts=[join(CSCAPE_FTS, "/")], HeatToleranceGroups=["-5_8_14"], HeatToleranceInit=["0_1.91"],
+        fts=[join(CSCAPE_FTS, "/")], HeatToleranceGroups=[CSCAPE_HEAT_TOLERANCE_GROUPS], HeatToleranceInit=["0_1.91"],
         Heritability=["0.5_0.01"], Plasticity=[0.0], counterfactual=[missing],
         Disturbance_file=["placeholder.RData"], Connectivity_file=["placeholder.RData"],
         Spatial_file=["placeholder.RData"], Geometry_file=["placeholder.RData"],
@@ -305,10 +310,12 @@ function run_engine(key::Symbol, dom, dom_fixed, scens::DataFrame, spec, out::Ab
     if key === :coralblox
         ## 06's order: setup() first (it returns early if ADRIA_OUTPUT_DIR is already set and resets
         ## ADRIA_LOG_COVER without a config.toml), THEN the overrides. The cover log is the per
-        ## group/size cover the size-structure figures read.
+        ## group/size cover the size-structure figures read; the DHW-tolerance log (off by default,
+        ## setup() resets it too) is the per group/size/location mean tolerance the thermal figures read.
         ADRIA.setup()
         ENV["ADRIA_OUTPUT_DIR"] = out
         ENV["ADRIA_LOG_COVER"] = "true"
+        ENV["ADRIA_LOG_DHW_TOLS"] = "true"
         return ADRIA.run_scenarios(dom_fixed, scens, cfg.rcp)
     elseif key === :cscape
         setup_cscape_project(out, cfg, years)
@@ -506,24 +513,33 @@ function extract_size_structure(key::Symbol, rs, run_dir::AbstractString, dom, c
     return nothing
 end
 
-## C~scape: out_array (years, sites, intervention, ft, heat_bin, metric); metric VAL_SIZE = the 100 IPM
-## size classes (colony density), intervention slot 3 = combined. Loaded exactly as 06 section 5.4 does.
-function _cscape_size_structure(rs, run_dir, dom, cfg, scens)
-    files = sort(filter(f -> occursin(r"^Array_scenario_.*\.jld2$", f), readdir(joinpath(run_dir, "model_outputs"))))
-    isempty(files) && return nothing
+## C~scape: out_array (years, sites, intervention, ft, heat_bin, metric), intervention slot 3 = combined.
+## `f(out)` for each scenario's raw output in file-name (= scenario) order, loaded exactly as 06 section
+## 5.4 does; `false` when the run kept no raw arrays.
+function _cscape_each_output(f, run_dir, dom, cfg, scens)::Bool
+    dir = joinpath(run_dir, "model_outputs")
+    files = isdir(dir) ? sort(filter(f -> occursin(r"^Array_scenario_.*\.jld2$", f), readdir(dir))) : String[]
+    isempty(files) && return false
     cs_scen, _, _ = CscapeInterface.cscape_sample_to_scenarios(run_dir, CSCAPE_BASE_SCENARIO_ID, scens)
     cs_scen_jl = CscapeInterface._demog_julia_scenarios(run_dir; scenarios=cs_scen)
     inp = CscapeInterface.domain_to_cscape_inputs(dom; dhw_idx=cfg.dhw_idx, wave_idx=cfg.wave_idx, cyclone_idx=cfg.cyclone_idx)
+    for file in files
+        m = match(r"Array_scenario_(\d+)_rep_(\d+)_draw_(.+)\.jld2$", file)
+        f(CScape.load_output(run_dir, parse(Int, m[1]); rep_index=parse(Int, m[2]), draw=parse(Int, m[3]),
+            scenarios=cs_scen_jl, spatial_override=inp.spatial_override))
+    end
+    return true
+end
+
+## Size structure: metric VAL_SIZE = the 100 IPM size classes (colony density).
+function _cscape_size_structure(rs, run_dir, dom, cfg, scens)
     vals, d_cm, years = Array{Float64,3}[], nothing, nothing
-    for f in files
-        m = match(r"Array_scenario_(\d+)_rep_(\d+)_draw_(.+)\.jld2$", f)
-        out = CScape.load_output(run_dir, parse(Int, m[1]); rep_index=parse(Int, m[2]), draw=parse(Int, m[3]),
-            scenarios=cs_scen_jl, spatial_override=inp.spatial_override)
+    _cscape_each_output(run_dir, dom, cfg, scens) do out
         oa = out.out_array
         push!(vals, dropdims(sum(oa[:, :, 3, :, :, CScape.Layout.VAL_SIZE]; dims=(2, 4)); dims=(2, 4)))   # [T, ft, 100]
         d_cm = out.meshpoints
         years = collect(ADRIA.timesteps(rs))[1:min(end, size(oa, 1))]
-    end
+    end || return nothing
     value = cat(vals...; dims=4)                                                                     # [T, G, B, S]
     ## C~scape's array includes its extra initial year (see align_cscape): keep the last length(years).
     value = value[(end - length(years) + 1):end, :, :, :]
@@ -550,6 +566,194 @@ function _reefmod_size_structure(rs)
     value = cat(vals...; dims=4)
     return Dict("years" => collect(ADRIA.timesteps(rs))[1:size(value, 1)], "groups" => ENGINE_INFO[:reefmod].groups,
         "d_cm" => repeat(reshape(mids, 1, :), 6, 1), "value" => value, "units" => "colony counts (summed over reefs)")
+end
+
+# =============================================================================
+# Thermal tolerance: one common format for the engines with heritable tolerance
+# =============================================================================
+#
+# thermal_tolerance.jld2 holds
+#   "years"         [T]
+#   "groups"        [G]          the engine's own group labels
+#   "scale"                      "absolute DHW" (CoralBlox, Kora: the DHW a colony tolerates) or
+#                                "offset DHW" (C~scape, ReefMod: shift from the population's mean response, 0 at the start)
+#   "mean"          [T, G, S]    domain-level mean tolerance per group (weighted as "weighting" says)
+#   "weight"        [T, G, S]    each group's weight in the pooled mean / distribution
+#   "x"             [K]          tolerance grid (bin centres, the engine's own scale), "dx" its spacing
+#   "density"       [T, K, S]    pooled distribution (all groups and locations), share per grid cell (sums to 1)
+#   "density_kind"               "native classes" (C~scape) or "mixture of normals" (the others)
+#   "weighting"                  what weights locations / groups (for the captions)
+#   "limits"        [2]          the engine's lower / upper bound on the scale, NaN where there is none
+# CoralPop (acclimation only) and CORSET (no tolerance) have none.
+
+"Shares per cell of `x` of the mixture Σ w N(μ, σ) (components with `w <= 0` or no spread are skipped)."
+function _normal_mixture_share(x::AbstractVector, w, μ, σ)::Vector{Float64}
+    dens = zeros(length(x))
+    for i in eachindex(w)
+        (w[i] > 0 && isfinite(μ[i]) && σ[i] > 0) || continue
+        @. dens += w[i] * exp(-((x - μ[i]) / σ[i])^2 / 2) / σ[i]
+    end
+    s = sum(dens)
+    return s > 0 ? dens ./ s : dens
+end
+
+"Weighted mean of `v` (`NaN` when the weights sum to 0)."
+_wmean(v, w) = (W = sum(w); W > 0 ? sum(v .* w) / W : NaN)
+
+"""
+    extract_thermal_tolerance(key, rs, run_dir, dom, cfg, scens) -> Dict or nothing
+
+The thermal-tolerance distribution through time in the common format above, from the engine's own logs
+or raw output. `nothing` for CoralPop/CORSET, or when the run did not record tolerance (CoralBlox
+before `ADRIA_LOG_DHW_TOLS`, Kora before `KoraOutput.dhw_tol`, C~scape without raw arrays). Failures
+are reported and return `nothing`, as for the size structure.
+"""
+function extract_thermal_tolerance(key::Symbol, rs, run_dir::AbstractString, dom, cfg, scens::DataFrame)
+    try
+        key === :coralblox && return _coralblox_thermal(rs, dom, scens)
+        key === :kora && return _kora_thermal(rs)
+        key === :cscape && return _cscape_thermal(rs, run_dir, dom, cfg, scens)
+        key === :reefmod && return _reefmod_thermal(rs, run_dir)
+    catch err
+        @warn "Could not extract $(ENGINE_INFO[key].label)'s thermal tolerance; the thermal figures will skip it" exception = (err, catch_backtrace())
+    end
+    return nothing
+end
+
+## CoralBlox: coral_dhw_tol_log [T, coral_id, L, S], the mean of each group/size class's tolerance
+## distribution per location, logged at the same point as the cover log (after growth, before that year's
+## bleaching); its SD is fixed per coral (the sampled `dist_std`). Row 1 is never written: it is each
+## scenario's starting mean (`dist_mean`, also a sampled factor). Weights: cover log x k-area.
+function _coralblox_thermal(rs, dom, scens)
+    tl, cl = rs.coral_dhw_tol_log, rs.coral_cover_log
+    (tl === nothing || cl === nothing || size(tl, 3) == 1 || size(cl, 3) == 1) && return nothing   # logging was off
+    μ = Float64.(Array(tl))
+    cov = Float64.(Array(cl))
+    T, C, L, S = size(μ)
+    size(cov) == size(μ) || error("CoralBlox's tolerance log $(size(μ)) and cover log $(size(cov)) differ in shape.")
+    specs = [ADRIA.to_coral_spec(scens[s, :]) for s in 1:S]
+    σ = reduce(hcat, [Float64.(sp.dist_std) for sp in specs])                        # [C, S]
+    for s in 1:S
+        μ[1, :, :, s] .= Float64.(specs[s].dist_mean)
+    end
+    cov[1, :, :, :] .= reshape(Float64.(Array(dom.init_coral_cover)), C, L, 1)
+    w = cov .* reshape(ADRIA.loc_k_area(rs), 1, 1, L, 1)                            # m^2 of cover
+    n_sizes = size(ADRIA.bin_edges(), 2) - 1
+    G = C ÷ n_sizes
+    grp = repeat(1:G; inner=n_sizes)                                                # coral_id -> group
+    x = collect(-5.0:0.25:30.0)
+    mean_g, weight_g, density = zeros(T, G, S), zeros(T, G, S), zeros(T, length(x), S)
+    for s in 1:S, t in 1:T
+        for g in 1:G
+            sel = grp .== g
+            weight_g[t, g, s] = sum(w[t, sel, :, s])
+            mean_g[t, g, s] = _wmean(μ[t, sel, :, s], w[t, sel, :, s])
+        end
+        density[t, :, s] = _normal_mixture_share(x, vec(w[t, :, :, s]), vec(μ[t, :, :, s]),
+            vec(repeat(σ[:, s], 1, L)))
+    end
+    return Dict("years" => collect(ADRIA.timesteps(rs)), "groups" => ENGINE_INFO[:coralblox].groups,
+        "scale" => "absolute DHW", "mean" => mean_g, "weight" => weight_g, "x" => x, "dx" => step(-5.0:0.25:30.0),
+        "density" => density, "density_kind" => "mixture of normals",
+        "weighting" => "cover (after growth, before that year's bleaching), per group x size class x location",
+        "limits" => [ADRIA.HEAT_LB, NaN])
+end
+
+## Kora: KoraOutput.dhw_tol [T, G, 2, L] (mean, SD of the wild population, end of each year); weights
+## = the group's colony area at the location (cover_m2 summed over size bins).
+function _kora_thermal(rs)
+    outs = [load_kora_output(p) for p in rs.raw_output_paths]
+    any(o -> isempty(o.dhw_tol), outs) && return nothing                 # written before it was recorded
+    T, G, _, L = size(outs[1].dhw_tol)
+    S = length(outs)
+    x = collect(-5.0:0.25:30.0)
+    mean_g, weight_g, density = zeros(T, G, S), zeros(T, G, S), zeros(T, length(x), S)
+    for (s, o) in enumerate(outs)
+        w = dropdims(sum(o.cover_m2; dims=3); dims=3)                    # [T, G, L]
+        μ, σ = Float64.(o.dhw_tol[:, :, 1, :]), Float64.(o.dhw_tol[:, :, 2, :])
+        for t in 1:T
+            for g in 1:G
+                weight_g[t, g, s] = sum(w[t, g, :])
+                mean_g[t, g, s] = _wmean(μ[t, g, :], w[t, g, :])
+            end
+            density[t, :, s] = _normal_mixture_share(x, vec(w[t, :, :]), vec(μ[t, :, :]), vec(σ[t, :, :]))
+        end
+    end
+    return Dict("years" => outs[1].years, "groups" => ENGINE_INFO[:kora].groups,
+        "scale" => "absolute DHW", "mean" => mean_g, "weight" => weight_g, "x" => x, "dx" => 0.25,
+        "density" => density, "density_kind" => "mixture of normals",
+        "weighting" => "colony area, per group x location (wild population)", "limits" => [NaN, NaN])
+end
+
+## C~scape: VAL_COVER per heat class (% of each site's area, combined slot), the engine's own classes.
+## Sites weighted by their area (the domain translation passes the domain's `area` per site, same order).
+function _cscape_thermal(rs, run_dir, dom, cfg, scens)
+    cls = cscape_heat_classes()
+    area = Float64.(dom.loc_data.area)
+    covs = Array{Float64,3}[]                                            # each [T, ft, classes]
+    _cscape_each_output(run_dir, dom, cfg, scens) do out
+        oa = out.out_array
+        size(oa, 5) == length(cls) || error("C~scape output has $(size(oa, 5)) heat classes, expected $(length(cls)) ($CSCAPE_HEAT_TOLERANCE_GROUPS).")
+        size(oa, 2) == length(area) || error("C~scape output has $(size(oa, 2)) sites, the domain $(length(area)).")
+        c = oa[:, :, 3, :, :, CScape.Layout.VAL_COVER] ./ 100 .* reshape(area, 1, :, 1, 1)   # m^2 [T, site, ft, class]
+        push!(covs, dropdims(sum(c; dims=2); dims=2))
+    end || return nothing
+    years = collect(ADRIA.timesteps(rs))
+    ## C~scape's array includes its extra initial year (see align_cscape): keep the last length(years).
+    covs = [c[(end - length(years) + 1):end, :, :] for c in covs]
+    T, G, K = size(covs[1])
+    S = length(covs)
+    mean_g, weight_g, density = zeros(T, G, S), zeros(T, G, S), zeros(T, K, S)
+    for (s, c) in enumerate(covs), t in 1:T
+        for g in 1:G
+            weight_g[t, g, s] = sum(c[t, g, :])
+            mean_g[t, g, s] = _wmean(cls, c[t, g, :])
+        end
+        tot = vec(sum(c[t, :, :]; dims=1))
+        density[t, :, s] = sum(tot) > 0 ? tot ./ sum(tot) : tot
+    end
+    return Dict("years" => years, "groups" => ENGINE_INFO[:cscape].groups,
+        "scale" => "offset DHW", "mean" => mean_g, "weight" => weight_g, "x" => cls, "dx" => step(range(cls[1], cls[end]; length=K)),
+        "density" => density, "density_kind" => "native classes",
+        "weighting" => "coral cover (m^2) in each tolerance class, sites weighted by area", "limits" => [cls[1], cls[end]])
+end
+
+## ReefMod: RESULT.coral_HT_mean / coral_HT_var [R, T6+1, 6] -- the egg-volume-weighted mean / variance of
+## heat tolerance (HT, DHW offset) of GRAVID colonies, filled at the annual (winter) indices; NaN where a
+## group has no gravid colony. Reefs and groups pooled with total fecundity as the weight. The raw paths
+## the run recorded may be another machine's (results copied from the HPC): the same file names under
+## run_dir/outputs are used then.
+function _reefmod_thermal(rs, run_dir)
+    paths = [isfile(p) ? p : joinpath(run_dir, "outputs", basename(p)) for p in rs.raw_output_paths]
+    all(isfile, paths) || return nothing
+    x = collect(-8.0:0.25:8.0)
+    means, weights, dens = Array{Float64,2}[], Array{Float64,2}[], Array{Float64,2}[]
+    for p in paths
+        R = MAT.matread(p)["RESULT"]
+        haskey(R, "coral_HT_mean") || return nothing
+        m, v, f = Float64.(R["coral_HT_mean"]), Float64.(R["coral_HT_var"]), Float64.(R["coral_total_fecundity"])
+        idx = reefmod_annual_indices(size(m, 2) - 1)[1:(end - 1)]
+        T, G = length(idx), size(m, 3)
+        mg, wg, d = zeros(T, G), zeros(T, G), zeros(T, length(x))
+        for (ti, t) in enumerate(idx)
+            mt, vt, ft = m[:, t, :], v[:, t, :], f[:, t, :]
+            ok = .!isnan.(mt) .& .!isnan.(vt) .& (ft .> 0)
+            wt = ifelse.(ok, ft, 0.0)
+            for g in 1:G
+                wg[ti, g] = sum(wt[:, g])
+                mg[ti, g] = _wmean(ifelse.(ok[:, g], mt[:, g], 0.0), wt[:, g])
+            end
+            ## a single gravid colony has variance 0: give it a narrow spread rather than dropping it
+            d[ti, :] = _normal_mixture_share(x, vec(wt), vec(ifelse.(ok, mt, 0.0)), vec(sqrt.(max.(ifelse.(ok, vt, 0.0), 0.01))))
+        end
+        push!(means, mg); push!(weights, wg); push!(dens, d)
+    end
+    years = collect(ADRIA.timesteps(rs))[1:size(means[1], 1)]
+    return Dict("years" => years, "groups" => ENGINE_INFO[:reefmod].groups,
+        "scale" => "offset DHW", "mean" => cat(means...; dims=3), "weight" => cat(weights...; dims=3),
+        "x" => x, "dx" => 0.25, "density" => cat(dens...; dims=3), "density_kind" => "mixture of normals",
+        "weighting" => "egg volume of gravid colonies, per reef x group (as ReefMod records it)",
+        "limits" => [-8.0, 8.0])
 end
 
 # =============================================================================

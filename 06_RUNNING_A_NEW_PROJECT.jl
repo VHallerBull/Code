@@ -483,9 +483,12 @@ if RUN_ADVANCED_PLOTS
     plot!(p_size, diam_cm, size_by_year[end, :]; label="$(years_cs[end])")
     savefig(p_size, joinpath(IMAGES_DIR, "newproject_size_structure.png"))
 
-    n_bins = size(out_array, 5)
-    bin_centres = range(-1, 1; length=n_bins)
-    cover_by_bin = dropdims(sum(out_array[:, :, COMBINED_IDX, :, :, 1]; dims=(2, 3)); dims=(2, 3))
+    ## The heat-tolerance classes are HeatToleranceGroups "-5_8_14" (section 1.3): 14 DHW offsets -5..+8.
+    ## VAL_COVER is % of each site's area, so weight sites by their area before summing.
+    bin_centres = range(-5, 8; length=14)
+    size(out_array, 5) == length(bin_centres) || error("Expected 14 heat-tolerance classes (HeatToleranceGroups -5_8_14).")
+    site_area = reshape(Float64.(dom.loc_data.area), 1, :, 1, 1)
+    cover_by_bin = dropdims(sum(out_array[:, :, COMBINED_IDX, :, :, CScape.Layout.VAL_COVER] .* site_area; dims=(2, 3)); dims=(2, 3))
     weighted_tol = vec(sum(cover_by_bin .* bin_centres'; dims=2) ./ sum(cover_by_bin; dims=2))
 
     p_tol = plot(years_cs, weighted_tol; label="C~scape mean thermal tolerance", lw=2)

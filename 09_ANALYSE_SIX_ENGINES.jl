@@ -6,7 +6,7 @@
 Loads every `ModelRuns/<project>/<engine>/` folder that has a result (missing engines are reported
 and skipped), checks that all of them used the same domain, climate member and years, and writes:
 
-    images/<section>/*.png   the figures, one folder per section (A-K below)
+    images/<section>/*.png   the figures, one folder per section (A-L below)
     summary.csv              per engine x metric x year: median, IQR, min, max over scenarios
     benchmark_summary.csv    per engine: time, memory, disk (from benchmark.csv + Slurm accounting)
     FIGURES.md               every figure with a one-line caption, plus the caveats behind them
@@ -23,6 +23,7 @@ Sections
     I  sensitivity   PAWN / TSA / outcome maps per engine (illustrative at small N)
     J  corset        CORSET's algae and consumer state
     K  benchmarks    load / first-result / per-scenario time, CPU time, peak memory, disk
+    L  thermal       heritable thermal tolerance (CoralBlox, C~scape, Kora, ReefMod): mean shift and distribution over time
 
 Each figure is made independently: one that fails is reported in FIGURES.md and the console, and the
 rest are still written. Engine identity is colour + line style + marker throughout (the palette's
@@ -190,8 +191,9 @@ const METRICS = [
 ]
 const METRIC_TITLE = Dict(m => t for (m, t, _) in METRICS)
 
-## The taxa-based figures don't use the domain metrics (slow to compute); a filtered run of only those skips them.
-const TAXA_ONLY_FIGURES = ("taxa_native", "taxa_harmonised", "composition_initial", "composition_final")
+## The taxa-based and thermal figures don't use the domain metrics (slow to compute); a filtered run of only those skips them.
+const TAXA_ONLY_FIGURES = ("taxa_native", "taxa_harmonised", "composition_initial", "composition_final",
+    "thermal_mean_shift", "thermal_distribution_over_time", "thermal_distribution_years", "thermal_mean_native")
 const NEED_METRICS = isempty(ONLY_FIGURES) || any(!in(TAXA_ONLY_FIGURES), ONLY_FIGURES)
 loc = Dict(e.key => Dict(m => (NEED_METRICS ? loc_metric(e, f, m) : missing) for (m, _, f) in METRICS) for e in engines)
 dommean = Dict(e.key => Dict(m => (a === missing ? missing : domain_mean(a)) for (m, a) in loc[e.key]) for e in engines)
@@ -923,6 +925,139 @@ if !isempty(bench)
 end
 
 # =============================================================================
+# L. Thermal tolerance
+# =============================================================================
+
+## The engines with heritable tolerance; CoralPop (acclimation only) and CORSET (none) have no such state.
+const THERMAL_KEYS = (:coralblox, :cscape, :kora, :reefmod)
+thermal = Dict{Symbol,Any}()
+thermal_missing = String[]
+for e in engines
+    e.key in THERMAL_KEYS || continue
+    f = joinpath(e.dir, "thermal_tolerance.jld2")
+    if !isfile(f) && e.key in (:cscape, :reefmod)
+        ## runs from before 08 saved it: C~scape's raw arrays / ReefMod's .mat files still hold it
+        tt = extract_thermal_tolerance(e.key, e.rs, joinpath(e.dir, "run"), dom, cfg,
+            JLD2.load(joinpath(e.dir, "samples.jld2"), "scens"))
+        tt === nothing || JLD2.save(f, tt)
+    end
+    if isfile(f)
+        tt = JLD2.load(f)
+        if tt["years"] == YEARS
+            thermal[e.key] = tt
+        else
+            @warn "$(e.label)'s thermal tolerance covers years $(first(tt["years"]))-$(last(tt["years"])), not the domain's; skipped."
+            push!(thermal_missing, e.label)
+        end
+    else
+        push!(thermal_missing, e.label)
+    end
+end
+thermal_engines = [e for e in engines if haskey(thermal, e.key)]
+const THERMAL_NOTE = (isempty(thermal_missing) ? "" :
+    " Not recorded in this run (re-run needed): $(join(thermal_missing, ", ")).") *
+    " CoralPop (acclimation only) and CORSET have no heritable tolerance."
+
+"Domain mean tolerance `[T, S]`: the groups' means pooled with their weights."
+function thermal_pooled_mean(tt)
+    m, w = tt["mean"], tt["weight"]
+    return [_wmean(ifelse.(w[t, :, s] .> 0, m[t, :, s], 0.0), w[t, :, s]) for t in axes(m, 1), s in axes(m, 3)]
+end
+"Change of the domain mean tolerance from each scenario's first year `[T, S]` (DHW)."
+thermal_shift(tt) = (m = thermal_pooled_mean(tt); m .- m[1:1, :])
+"The scenario whose final shift is the median one (a real scenario, so its distribution is a real distribution)."
+median_scenario(tt) = (d = thermal_shift(tt)[end, :]; sortperm(d)[cld(length(d), 2)])
+
+const THERMAL_YEAR_IDX = unique(filter(!isnothing, [1, min(11, NY), min(26, NY), findfirst(==(2050), YEARS), NY]))
+const THERMAL_YEAR_COLORS = ["#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#08306b"]   # light (early) -> dark (late)
+const THERMAL_YEAR_STYLES = [:dot, :dash, :dashdot, :dashdotdot, :solid]
+const THERMAL_WEIGHTING = "CoralBlox: cover-weighted mixture of each group x size class x location's normal (mean logged after growth, SD fixed); " *
+    "Kora: colony-area-weighted mixture of each group x location's normal (mean and SD); C~scape: cover in its own 14 tolerance classes (no fitted curve); " *
+    "ReefMod: gravid colonies only, egg-volume weighted, mixture of each reef x group's normal from the mean and variance it records."
+
+figure("L_thermal", "thermal_mean_shift", "Change in domain mean thermal tolerance from each engine's own first year (DHW): median (line), IQR (band) and every scenario (thin). On this scale CoralBlox/Kora (absolute tolerance thresholds) and C~scape/ReefMod (offsets from the population's mean response) compare directly. Lower panel: the domain DHW they responded to. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+    isempty(thermal_engines) && return nothing
+    fig = Mk.Figure(; size=(1100, 700))
+    ax = Mk.Axis(fig[1, 1]; ylabel="Δ mean tolerance (DHW)", title="Mean thermal tolerance, change from the first year ($MEMBER)")
+    for e in thermal_engines
+        spread!(ax, e, thermal_shift(thermal[e.key]))
+    end
+    Mk.hlines!(ax, [0.0]; color=:grey40, linestyle=:dash)
+    ax2 = Mk.Axis(fig[2, 1]; ylabel="DHW", xlabel="Year", title="Domain DHW")
+    Mk.lines!(ax2, YEARS, domain_dhw; color=:black, linewidth=1.5)
+    Mk.hlines!(ax2, [4, 8]; color=:grey30, linestyle=:dash, linewidth=1)
+    Mk.linkxaxes!(ax, ax2)
+    Mk.rowsize!(fig.layout, 2, Mk.Relative(0.25))
+    engine_legend!(fig[1, 2], thermal_engines)
+    fig
+end
+
+figure("L_thermal", "thermal_distribution_over_time", "Each engine's thermal-tolerance distribution (all groups and locations pooled) in $(join(YEARS[THERMAL_YEAR_IDX], ", ")), light to dark, on the engine's own scale; the median scenario (by final mean shift). Dashed grey lines are the engine's bounds (ReefMod ±8, C~scape's outer classes -5 and +8, CoralBlox's lower bound 1 DHW): mass piling up there means the engine's range is limiting adaptation. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+    isempty(thermal_engines) && return nothing
+    n = length(thermal_engines)
+    fig = Mk.Figure(; size=(1300, 380 * cld(n, 2) + 60))
+    for (i, e) in enumerate(thermal_engines)
+        tt = thermal[e.key]
+        s = median_scenario(tt)
+        native = tt["density_kind"] == "native classes"
+        ax = Mk.Axis(fig[fld1(i, 2), mod1(i, 2)]; title="$(e.label) (scenario $s)",
+            xlabel=tt["scale"] == "absolute DHW" ? "Tolerance (DHW)" : "Tolerance offset (DHW)",
+            ylabel=native ? "Share of cover per class" : "Density (per DHW)")
+        for (j, t) in enumerate(THERMAL_YEAR_IDX)
+            y = tt["density"][t, :, s] ./ (native ? 1.0 : tt["dx"])
+            native ? Mk.scatterlines!(ax, tt["x"], y; color=THERMAL_YEAR_COLORS[j], linestyle=THERMAL_YEAR_STYLES[j], linewidth=2, markersize=6) :
+                     Mk.lines!(ax, tt["x"], y; color=THERMAL_YEAR_COLORS[j], linestyle=THERMAL_YEAR_STYLES[j], linewidth=2)
+        end
+        lim = filter(isfinite, tt["limits"])
+        isempty(lim) || Mk.vlines!(ax, lim; color=:grey50, linestyle=:dash, linewidth=1)
+    end
+    Mk.Legend(fig[cld(n, 2) + 1, :], [Mk.LineElement(color=c, linestyle=l, linewidth=2) for (c, l) in zip(THERMAL_YEAR_COLORS, THERMAL_YEAR_STYLES)][1:length(THERMAL_YEAR_IDX)],
+        string.(YEARS[THERMAL_YEAR_IDX]); orientation=:horizontal, framevisible=false)
+    fig
+end
+
+figure("L_thermal", "thermal_distribution_years", "The same distributions regrouped by year, engines overlaid, each on the change from its own first-year mean (Δ DHW) so shape and spread compare directly; median scenario per engine. C~scape's classes are drawn as densities (share per 1-DHW class). $THERMAL_WEIGHTING$THERMAL_NOTE") do
+    isempty(thermal_engines) && return nothing
+    yi = unique([1, something(findfirst(==(2050), YEARS), cld(NY, 2)), NY])
+    fig = Mk.Figure(; size=(1500, 480))
+    axs = []
+    for (j, t) in enumerate(yi)
+        ax = Mk.Axis(fig[1, j]; title=string(YEARS[t]), xlabel="Δ tolerance from first-year mean (DHW)",
+            ylabel=j == 1 ? "Density (per DHW)" : "")
+        push!(axs, ax)
+        for e in thermal_engines
+            tt = thermal[e.key]
+            s = median_scenario(tt)
+            x = tt["x"] .- thermal_pooled_mean(tt)[1, s]
+            Mk.lines!(ax, x, tt["density"][t, :, s] ./ tt["dx"]; color=e.color, linestyle=e.linestyle, linewidth=2)
+        end
+    end
+    Mk.linkaxes!(axs...)
+    engine_legend!(fig[1, length(yi) + 1], thermal_engines)
+    fig
+end
+
+figure("L_thermal", "thermal_mean_native", "Mean thermal tolerance per functional group on each engine's own scale (CoralBlox, Kora: absolute DHW threshold; C~scape, ReefMod: offset from the population's mean response), median over scenarios. Groups with no cover (ReefMod: no gravid colonies) in a year are gaps. $THERMAL_WEIGHTING$THERMAL_NOTE") do
+    isempty(thermal_engines) && return nothing
+    n = length(thermal_engines)
+    fig = Mk.Figure(; size=(1400, 380 * cld(n, 2)))
+    pal = Mk.Makie.wong_colors()
+    for (i, e) in enumerate(thermal_engines)
+        tt = thermal[e.key]
+        ax = Mk.Axis(fig[fld1(i, 2), mod1(i, 2)]; title=e.label,
+            ylabel=tt["scale"] == "absolute DHW" ? "Mean tolerance (DHW)" : "Mean offset (DHW)")
+        for (g, lab) in enumerate(tt["groups"])
+            m = ifelse.(tt["weight"][:, g, :] .> 0, tt["mean"][:, g, :], NaN)            # [T, S]
+            med = [(v = filter(isfinite, m[t, :]); isempty(v) ? NaN : median(v)) for t in axes(m, 1)]
+            all(isnan, med) && continue
+            Mk.lines!(ax, YEARS, med; color=pal[mod1(g, length(pal))], linewidth=2, label=lab)
+        end
+        Mk.axislegend(ax; position=:lt, framevisible=false, labelsize=10)
+    end
+    fig
+end
+
+# =============================================================================
 # Summary table and figure index
 # =============================================================================
 
@@ -963,12 +1098,12 @@ const KORA_LARVAE = via_matrix(:kora) ? "all larvae via the matrix (self_seed of
 
 ## Which processes each engine represents in THIS comparison (from 07's header and the interfaces).
 const CAPABILITIES = [
-    ("CoralBlox", "5 ADRIA groups x 7", "yes", "yes", "yes", "yes"),
-    ("C~scape", "6 types, 100 IPM classes", "yes", "yes", "yes", "yes"),
-    ("CoralPop", "3 morphologies x bins", CORALPOP_LARVAE, "yes", "yes (via domain)", "yes"),
-    ("Kora", "5 ADRIA groups x 7", KORA_LARVAE, "yes", "no (no cyclone pathway)", "yes"),
-    ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no"),
-    ("ReefMod", "6 groups, 11 bins (counts)", "yes (ADRIA's matrix)", "yes", "switched off", "provisional"),
+    ("CoralBlox", "5 ADRIA groups x 7", "yes", "yes", "yes", "yes", "yes: normal per group x size x location, mean evolves (breeder's equation, h² sampled), SD fixed"),
+    ("C~scape", "6 types, 100 IPM classes", "yes", "yes", "yes", "yes", "yes: 14 offset classes (-5..+8 DHW), breeder's equation on the larval distribution (h = 0.5)"),
+    ("CoralPop", "3 morphologies x bins", CORALPOP_LARVAE, "yes", "yes (via domain)", "yes", "no (+5 % per consecutive bleaching year, acclimation only)"),
+    ("Kora", "5 ADRIA groups x 7", KORA_LARVAE, "yes", "no (no cyclone pathway)", "yes", "yes: normal per group x location, mean and SD evolve (h² = 0.3 ± 10 %)"),
+    ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no", "no"),
+    ("ReefMod", "6 groups, 11 bins (counts)", "yes (ADRIA's matrix)", "yes", "switched off", "provisional", "yes: offset per colony (±8 DHW), breeder's equation on gravid mean (h² = 0.3)"),
 ]
 
 ## A filtered run only adds (or refreshes) its own lines in the existing FIGURES.md, in the figure's section,
@@ -1033,11 +1168,12 @@ open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     end
     println(io, "- CORSET's consumer biomass is a placeholder; ReefMod's juveniles are provisional (see ReefModInterface indicators.jl).")
     println(io, "- The harmonised-taxa mapping is each interface's own translation table, an approximation.")
+    println(io, "- Thermal tolerance (L) is on two different scales: CoralBlox and Kora track the DHW a colony tolerates, C~scape and ReefMod an offset from the population's mean response (0 at the start). Only the change from the first year compares across engines. ReefMod records tolerance for gravid colonies only (egg-volume weighted), the others for all cover; C~scape's and ReefMod's ranges are bounded (+8 DHW), so a distribution pressed against that bound understates adaptation.$THERMAL_NOTE")
     println(io, "- Size structure (E) is compared as cover for every engine: C~scape's and ReefMod's colony counts are weighted by the area of a colony at each bin's centre diameter (approximate within a bin). Compare shapes (shares), not amounts.")
     println(io, "\n## What each engine represents here\n")
-    println(io, "| Engine | Size structure | Connectivity | DHW bleaching | Cyclones | Juveniles |\n|---|---|---|---|---|---|")
+    println(io, "| Engine | Size structure | Connectivity | DHW bleaching | Cyclones | Juveniles | Heritable thermal tolerance |\n|---|---|---|---|---|---|---|")
     for c in CAPABILITIES
-        println(io, "| ", join(c[[1, 2, 3, 4, 5, 6]], " | "), " |")
+        println(io, "| ", join(c, " | "), " |")
     end
     println(io, "\n## Figures\n")
     for sec in unique(f.section for f in figure_index)

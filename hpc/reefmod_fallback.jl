@@ -27,7 +27,7 @@ dom, dom_fixed, YEARS = load_shared_domain(cfg)
 if stage == "prepare"
     t = @elapsed begin
         isdir(JOB_DIR) && rm(JOB_DIR; recursive=true, force=true)
-        for f in ("result.jld2", "samples.jld2", "benchmark.csv", "size_structure.jld2")
+        for f in ("result.jld2", "samples.jld2", "benchmark.csv", "size_structure.jld2", "thermal_tolerance.jld2")
             isfile(joinpath(OUT, f)) && rm(joinpath(OUT, f))
         end
         spec = make_spec(:reefmod, dom_fixed, cfg, YEARS, JOB_DIR)
@@ -54,6 +54,8 @@ else
     save_engine_result(:reefmod, rs, OUT)
     ss = extract_size_structure(:reefmod, rs, JOB_DIR, dom, cfg, s["scens"])
     ss === nothing || JLD2.save(joinpath(OUT, "size_structure.jld2"), ss)
+    tt = extract_thermal_tolerance(:reefmod, rs, JOB_DIR, dom, cfg, s["scens"])
+    tt === nothing || JLD2.save(joinpath(OUT, "thermal_tolerance.jld2"), tt)
 
     ## per-task wall time / peak memory from GNU time's verbose logs written by reefmod_B.slurm
     task_logs = filter(f -> startswith(f, "time_reefmod_B_"), readdir(dirname(OUT)))
@@ -76,7 +78,7 @@ else
         t_first_s=isempty(secs) ? NaN : first(secs), t_first_compile_s=NaN, t_first_alloc_gb=NaN,
         t_main_s=t_main, t_main_compile_s=NaN, t_main_gc_s=NaN, t_main_alloc_gb=NaN,
         t_per_scen_s=t_main / n, t_per_scen_site_year_ms=1000 * t_main / (n * length(rs.loc_ids) * length(YEARS)),
-        t_size_extract_s=NaN, maxrss_gb=isempty(rss) ? NaN : maximum(rss),
+        t_size_extract_s=NaN, t_thermal_extract_s=NaN, maxrss_gb=isempty(rss) ? NaN : maximum(rss),
         disk_gb=dir_size_gb(JOB_DIR), disk_per_scen_gb=dir_size_gb(JOB_DIR) / n, t_total_s=NaN,
     )
     write_csv(joinpath(OUT, "benchmark.csv"), [bench])
