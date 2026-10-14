@@ -479,6 +479,14 @@ spec_for_disk(spec::DataFrame) = DataFrame(
 _habitable_area(rs) = sum(ADRIA.loc_k_area(rs))
 
 """
+Did ADRIA actually record the per-location log `x` (`[T, coral_id, locations, scenarios]`)? A log that
+was switched off is a never-written 1-location array of zeros -- the same shape as a real log of a
+1-location domain (SingleReef*), so check the values after the first (never written) row as well.
+"""
+_adria_log_recorded(x, rs) = x !== nothing && size(x, 3) == length(rs.loc_ids) &&
+    size(x, 1) > 1 && any(!iszero, Array(x)[2:end, :, :, :])
+
+"""
     extract_size_structure(key, rs, run_dir, dom, cfg, scens) -> Dict or nothing
 
 Read each scenario's raw output (or CoralBlox's cover log) into the common format above. `nothing`
@@ -495,7 +503,7 @@ function extract_size_structure(key::Symbol, rs, run_dir::AbstractString, dom, c
             ## cyclone mortality, from the 2nd timestep on; the 1st (never written, all zero) is the
             ## initial state, filled here from the domain's initial cover (same units, same order).
             cl = rs.coral_cover_log
-            (cl === nothing || size(cl, 3) == 1) && return nothing   # logging was off
+            _adria_log_recorded(cl, rs) || return nothing   # logging was off
             a = Float64.(Array(cl))
             T, C, L, S = size(a)
             a[1, :, :, :] .= reshape(Float64.(Array(dom.init_coral_cover)), C, L, 1)    # same for every scenario
@@ -653,7 +661,7 @@ end
 ## scenario's starting mean (`dist_mean`, also a sampled factor). Weights: cover log x k-area.
 function _coralblox_thermal(rs, dom, scens)
     tl, cl = rs.coral_dhw_tol_log, rs.coral_cover_log
-    (tl === nothing || cl === nothing || size(tl, 3) == 1 || size(cl, 3) == 1) && return nothing   # logging was off
+    (_adria_log_recorded(tl, rs) && _adria_log_recorded(cl, rs)) || return nothing   # logging was off
     μ = Float64.(Array(tl))
     cov = Float64.(Array(cl))
     T, C, L, S = size(μ)

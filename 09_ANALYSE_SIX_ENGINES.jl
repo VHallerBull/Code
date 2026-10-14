@@ -461,6 +461,12 @@ end
 sizes = Dict{Symbol,Any}()
 for e in engines
     f = joinpath(e.dir, "size_structure.jld2")
+    if !isfile(f) && e.key === :coralblox
+        ## a 1-location CoralBlox run whose cover log 08 did not recognise (fixed 2026-10-14): read it now
+        ss = extract_size_structure(e.key, e.rs, joinpath(e.dir, "run"), dom, cfg,
+            JLD2.load(joinpath(e.dir, "samples.jld2"), "scens"))
+        ss === nothing || JLD2.save(f, ss)
+    end
     isfile(f) && (sizes[e.key] = JLD2.load(f))
 end
 size_engines = [e for e in engines if haskey(sizes, e.key)]
@@ -959,8 +965,9 @@ thermal_missing = String[]
 for e in engines
     e.key in THERMAL_KEYS || continue
     f = joinpath(e.dir, "thermal_tolerance.jld2")
-    if !isfile(f) && e.key in (:cscape, :reefmod, :coconet)
-        ## runs from before 08 saved it: C~scape's raw arrays / ReefMod's .mat files / CoCoNet's raw output still hold it
+    if !isfile(f) && e.key in (:coralblox, :cscape, :reefmod, :coconet)
+        ## runs from before 08 saved it (or, for a 1-location CoralBlox run, before 08 recognised its logs):
+        ## CoralBlox's logs / C~scape's raw arrays / ReefMod's .mat files / CoCoNet's raw output still hold it
         tt = extract_thermal_tolerance(e.key, e.rs, joinpath(e.dir, "run"), dom, cfg,
             JLD2.load(joinpath(e.dir, "samples.jld2"), "scens"))
         tt === nothing || JLD2.save(f, tt)
