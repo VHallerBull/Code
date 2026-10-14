@@ -29,7 +29,8 @@ rest are still written. Engine identity is colour + line style + marker througho
 closest pair under deuteranopia is CoralPop vs Kora, Delta E 7.6, so colour alone is not enough).
 
 Configuration: the same `CMR_<NAME>` variables as 08 (`engine_config` in engines.jl);
-`CMR_PROJECT_NAME` picks the project to analyse. The domain, RCP and climate member are read from the
+`CMR_PROJECT_NAME` picks the project to analyse. `CMR_ONLY_FIGURES` (comma-separated figure file names,
+e.g. `composition_initial`) builds only those figures and merges their lines into the existing FIGURES.md. The domain, RCP and climate member are read from the
 saved results instead. `CMR_DOMAIN_PATH`, if set, only says where that domain's folder is; otherwise the
 path the engines recorded is used, or the default when that doesn't exist here (results copied from
 the HPC).
@@ -138,8 +139,13 @@ const NSTR = join(["$(e.label) $(n_scen[e.key])" for e in engines], ", ")
 figure_index = NamedTuple[]
 failed_figures = String[]
 
+## CMR_ONLY_FIGURES="composition_initial,taxa_harmonised": build just those figures (by file name, no .png)
+## and leave summary.csv / benchmark_summary.csv alone; their lines are merged into the existing FIGURES.md.
+const ONLY_FIGURES = filter(!isempty, strip.(split(get(ENV, "CMR_ONLY_FIGURES", ""), ',')))
+
 "Build and save one figure; failures are recorded, not fatal."
 function figure(f::Function, section::AbstractString, name::AbstractString, caption::AbstractString)
+    isempty(ONLY_FIGURES) || name in ONLY_FIGURES || return nothing
     try
         fig = f()
         fig === nothing && return nothing
@@ -184,7 +190,10 @@ const METRICS = [
 ]
 const METRIC_TITLE = Dict(m => t for (m, t, _) in METRICS)
 
-loc = Dict(e.key => Dict(m => loc_metric(e, f, m) for (m, _, f) in METRICS) for e in engines)
+## The taxa-based figures don't use the domain metrics (slow to compute); a filtered run of only those skips them.
+const TAXA_ONLY_FIGURES = ("taxa_native", "taxa_harmonised", "composition_initial", "composition_final")
+const NEED_METRICS = isempty(ONLY_FIGURES) || any(!in(TAXA_ONLY_FIGURES), ONLY_FIGURES)
+loc = Dict(e.key => Dict(m => (NEED_METRICS ? loc_metric(e, f, m) : missing) for (m, _, f) in METRICS) for e in engines)
 dommean = Dict(e.key => Dict(m => (a === missing ? missing : domain_mean(a)) for (m, a) in loc[e.key]) for e in engines)
 
 ## Relative shelter volume (and the indices built on it) is defined on [0, 1]; an engine outside that
@@ -423,17 +432,21 @@ figure("D_taxa", "taxa_harmonised", "Cover per ADRIA functional group, every eng
     fig
 end
 
-figure("D_taxa", "composition_final", "Share of final-year cover per harmonised ADRIA group, per engine (median scenario). Shows which groups each engine ends up dominated by.") do
-    es = [e for e in engines if harm[e.key] !== missing]
-    fig = Mk.Figure(; size=(1000, 500))
-    ax = Mk.Axis(fig[1, 1]; xticks=(1:length(es), [e.label for e in es]), ylabel="Share of cover", title="Composition in $(last(YEARS)) (harmonised groups)")
-    for (i, e) in enumerate(es)
-        v = vec(median(harm[e.key][end, :, :]; dims=2))
-        v = sum(v) > 0 ? v ./ sum(v) : v
-        Mk.barplot!(ax, fill(i, 5), v; stack=1:5, color=GROUP_COLORS[1:5], gap=0.3, strokecolor=:white, strokewidth=1)
+for (name, t, caption) in (
+    ("composition_initial", 1, "Share of first-year cover per harmonised ADRIA group, per engine (median scenario). Shows what each engine starts from: how faithfully it translates the domain's initial group composition. C~scape's first compared year has already had one year of dynamics."),
+    ("composition_final", NY, "Share of final-year cover per harmonised ADRIA group, per engine (median scenario). Shows which groups each engine ends up dominated by."))
+    figure("D_taxa", name, caption) do
+        es = [e for e in engines if harm[e.key] !== missing]
+        fig = Mk.Figure(; size=(1000, 500))
+        ax = Mk.Axis(fig[1, 1]; xticks=(1:length(es), [e.label for e in es]), ylabel="Share of cover", title="Composition in $(YEARS[t]) (harmonised groups)")
+        for (i, e) in enumerate(es)
+            v = vec(median(harm[e.key][t, :, :]; dims=2))
+            v = sum(v) > 0 ? v ./ sum(v) : v
+            Mk.barplot!(ax, fill(i, 5), v; stack=1:5, color=GROUP_COLORS[1:5], gap=0.3, strokecolor=:white, strokewidth=1)
+        end
+        Mk.Legend(fig[1, 2], [Mk.PolyElement(color=c) for c in GROUP_COLORS[1:5]], ADRIA_GROUPS; framevisible=false)
+        fig
     end
-    Mk.Legend(fig[1, 2], [Mk.PolyElement(color=c) for c in GROUP_COLORS[1:5]], ADRIA_GROUPS; framevisible=false)
-    fig
 end
 
 # =============================================================================
@@ -863,7 +876,7 @@ end
 
 bcol(k) = Dict(e.key => e for e in engines)[Symbol(k)]
 if !isempty(bench)
-    write_csv(joinpath(PROJECT_DIR, "benchmark_summary.csv"), [NamedTuple(r) for r in eachrow(bench)])
+    isempty(ONLY_FIGURES) && write_csv(joinpath(PROJECT_DIR, "benchmark_summary.csv"), [NamedTuple(r) for r in eachrow(bench)])
 
     "Horizontal bars of one benchmark column per engine (log axis when values span > 20x)."
     function bench_panel!(pos, col, title, unit)
@@ -924,7 +937,7 @@ for e in engines, (m, t, _) in METRICS
             q25=q(v, 0.25), q75=q(v, 0.75), min=minimum(v), max=maximum(v)))
     end
 end
-write_csv(joinpath(PROJECT_DIR, "summary.csv"), rows)
+isempty(ONLY_FIGURES) && write_csv(joinpath(PROJECT_DIR, "summary.csv"), rows)
 
 ## C~scape's demography check as that run recorded it (results from before the check existed carry none --
 ## and were run with survival models whose cloglog link had been exported as logit, so their cover is too low).
@@ -957,6 +970,40 @@ const CAPABILITIES = [
     ("CORSET", "none (brooding/spawning)", "yes", CORSET_DHW, CORSET_CYC, "no"),
     ("ReefMod", "6 groups, 11 bins (counts)", "yes (ADRIA's matrix)", "yes", "switched off", "provisional"),
 ]
+
+## A filtered run only adds (or refreshes) its own lines in the existing FIGURES.md, in the figure's section,
+## after the last line of that section; everything else in the file is kept as it was.
+function merge_figure_lines!(path, figs)
+    isfile(path) || return false
+    lines = readlines(path)
+    for f in figs
+        line = "- [`$(basename(f.file))`]($(f.file)) -- $(f.caption)"
+        key = "- [`$(basename(f.file))`]"
+        i = findfirst(l -> startswith(l, key), lines)
+        if i !== nothing
+            lines[i] = line
+            continue
+        end
+        h = findfirst(==("### " * replace(f.section, "_" => " ", count=1)), lines)
+        h === nothing && return false
+        j = h + 1
+        while j + 1 <= length(lines) && !startswith(lines[j + 1], "###") && !startswith(lines[j + 1], "## ")
+            j += 1
+        end
+        while j > h && isempty(lines[j]) j -= 1 end                          # insert before the blank line
+        insert!(lines, j + 1, line)
+    end
+    write(path, join(lines, "\n") * "\n")
+    return true
+end
+
+if !isempty(ONLY_FIGURES)
+    ok = merge_figure_lines!(joinpath(PROJECT_DIR, "FIGURES.md"), figure_index)
+    ok || @warn "FIGURES.md missing or without the figures' section; not updated (run 09 without CMR_ONLY_FIGURES)"
+    @info "Selected figures written" PROJECT_DIR ONLY_FIGURES n_figures = length(figure_index) failed = length(failed_figures)
+    isempty(failed_figures) || (@warn "Some figures failed" failed_figures; exit(1))
+    exit(0)
+end
 
 open(joinpath(PROJECT_DIR, "FIGURES.md"), "w") do io
     println(io, "# Six-engine comparison: $(cfg.project)\n")

@@ -127,9 +127,12 @@ const CORALPOP_MODE = Symbol(_cfg("CORALPOP_MODE", "run"))
 const KORA_MODE = Symbol(_cfg("KORA_MODE", "run"))
 const CORSET_MODE = Symbol(_cfg("CORSET_MODE", "run"))
 const CSCAPE_MODE = Symbol(_cfg("CSCAPE_MODE", "load"))
-## ReefMod defaults to :load (no local MATLAB on this machine as of writing) -- set
-## CMR_REEFMOD_MODE=run once a real `matlab` is on PATH here (workstation license or Apptainer).
-const REEFMOD_MODE = Symbol(_cfg("REEFMOD_MODE", "load"))
+## ReefMod defaults to :run (needs a real `matlab` on PATH -- workstation license, Apptainer with the
+## host's MATLAB bind-mounted, or an HPC `module load matlab`). Set CMR_REEFMOD_MODE=load to reuse an
+## earlier run's saved result instead (e.g. iterating on the other five engines or the analysis step
+## without re-paying ReefMod's MATLAB cost -- see jobs.txt/REEFMOD_MODE notes in ReefModInterface.jl's
+## README for why that's sometimes deliberate), or =skip to leave ReefMod out entirely.
+const REEFMOD_MODE = Symbol(_cfg("REEFMOD_MODE", "run"))
 
 ## CoralPop parallelism: Distributed workers, each with its own Python interpreter (0 = this process).
 const CORALPOP_N_WORKERS = parse(Int, _cfg("CORALPOP_N_WORKERS", "2"))
