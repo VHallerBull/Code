@@ -1,19 +1,22 @@
 # Source clones
 
 The Julia packages this environment uses are local development clones (see `Project.toml` `[sources]`).
-Recorded by `record_sources.jl` on 2026-10-01 17:47.
+Recorded by `record_sources.jl` on 2026-10-07 07:44.
 
 | Repository (local path) | Packages used | Branch | Commit | Uncommitted changes |
 |---|---|---|---|---|
-| `C:\Users\vhaller\Documents\GitHub\ADRIA.jl` | ADRIA, ADRIAanalysis, ADRIAviz | CscapeIntegration | cbd8d30f Add engine=:kora to run_scenarios via a weak-dependency extension | no |
-| `C:\Users\vhaller\Documents\GitHub\ADRIAIndicators.jl` | ADRIAIndicators | main | baf4b68 Merge pull request #23 from open-AIMS/bump-version-0.3 | no |
-| `C:\Users\vhaller\Documents\GitHub\CScape.jl` | CScape | ADRIAIntegration | ae3d1f8 Cache create_ipm's growth-kernel Normal-CDF pass per (wave_exposure, depth_cat) | **yes** |
-| `C:\Users\vhaller\Documents\GitHub\CoralPopInterface.jl` | CoralPopInterface | main | 14ffa59 README: Phase 7 lives in CoralModelReview/Code | no |
-| `C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl` | CscapeInterface | CScapeUpdate | 8b63533 Fix relative shelter volume: use ADRIA's 95 cm reference colony, clamp to [0, 1] | **yes** |
-| `C:\Users\vhaller\Documents\GitHub\Kora.jl` | Kora | main | b494767 fix: refit packaged survival models on start-of-interval size; bump to v1.4.2 (#42) | **yes** |
-| `C:\Users\vhaller\Documents\GitHub\KoraInterface.jl` | KoraInterface | main | 6f97b86 Add KoraInterface.jl: run Kora as a fourth ADRIA engine | no |
+| `C:\Users\vhaller\Documents\GitHub\ADRIA.jl` | ADRIA, ADRIAanalysis, ADRIAviz | CscapeIntegration | 97fb44ee :coralpop/:kora engines: forward larvae_via_connectivity | no |
+| `C:\Users\vhaller\Documents\GitHub\ADRIAIndicators.jl` | ADRIAIndicators | main | 6d22933 Merge pull request #26 from open-AIMS/juve-vec-case | no |
+| `C:\Users\vhaller\Documents\GitHub\CORSET.jl` | CORSET | master | 11f19e3 Fix regional coral recruitment double-counting the local supply | no |
+| `C:\Users\vhaller\Documents\GitHub\CORSETInterface.jl` | CORSETInterface | master | e31e24e Store the domain's initial cover as timestep 1; store k as max cover | no |
+| `C:\Users\vhaller\Documents\GitHub\CScape.jl` | CScape | ADRIAIntegration | 4fc1dc8 Point the demography export at CscapeInterface; drop data-raw's environment | no |
+| `C:\Users\vhaller\Documents\GitHub\CoralPopInterface.jl` | CoralPopInterface | main | f1f7539 Map Branching to corymbose non-Acropora, Foliose to the Acropora groups | no |
+| `C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl` | CscapeInterface | CScapeUpdate | f403236 Add ADRIAviz and CairoMakie to the package environment | no |
+| `C:\Users\vhaller\Documents\GitHub\Kora.jl` | Kora | integration/combined-fixes | 334f281 Merge branch 'feat/larval-connectivity' into integration/combined-fixes | no |
+| `C:\Users\vhaller\Documents\GitHub\KoraInterface.jl` | KoraInterface | main | b1bde13 feat: optional larval connectivity (larvae_via_connectivity) | no |
+| `C:\Users\vhaller\Documents\GitHub\ReefModInterface.jl` | ReefModInterface | master | fb5b4dd Run ReefMod via matlab subprocesses as ADRIA's :reefmod engine, not Slurm-only | no |
 
 Other local inputs the scripts read (not packages):
 - the ADRIA domain package and CoralBlox calibration file named in each script's CONFIG section
 - the CoralPop Python engine, `CoralPop-Engine` (branch `engine-api`), used through CoralPopInterface
-  - C:\Users\vhaller\Documents\GitHub\CoralPop-Engine: engine-api @ a4ef31a Engine: cap recruits at free substrate; floor benthos and settlement at zero
+  - C:\Users\vhaller\Documents\GitHub\CoralPop-Engine: engine-api @ 032824c run_network: include_self keeps the connectivity diagonal as self-recruitment

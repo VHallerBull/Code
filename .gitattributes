@@ -1,0 +1,5 @@
+# Scripts that run on Linux (WSL build, HPC jobs) must keep LF line endings even in a Windows checkout
+# with core.autocrlf=true -- bash fails on CRLF ("$'\r': command not found").
+*.sh    text eol=lf
+*.slurm text eol=lf
+*.def   text eol=lf

@@ -1,0 +1,123 @@
+Bootstrap: docker
+From: julia:1.12.5-bookworm
+
+# One image for all six coral engines of the CoralModelReview comparison: CoralBlox (ADRIA), C~scape,
+# CoralPop (Python), Kora, CORSET and ReefMod (MATLAB). Everything except MATLAB itself is inside:
+# Julia 1.12.5 with the Code/ environment instantiated and precompiled, R (C~scape's interface loads
+# RCall), a Python 3.12 environment for the CoralPop engine, the ADRIA Test domain and C~scape's
+# converted demography. MATLAB comes from the HPC at run time: its install is bind-mounted and its
+# licence variables passed through (see jobs/run_engine.slurm) -- the MATLAB system libraries are
+# installed here so a bind-mounted MATLAB can start.
+#
+# Do not build this file directly from the repo: run stage_sources.sh first (it assembles
+# ~/coral-build/coral from the local clones), then build_image.sh. Full instructions:
+# RUNNING_ON_HPC.md.
+#
+#   cd ~/coral-build && apptainer build --fakeroot coral_engines.sif coral_engines.def
+
+%files
+    coral /opt/coral
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    # libsqlite3-0: PROJ_jll (via ArchGDAL, an ADRIA dependency) dlopen's the system libsqlite3.
+    # r-base-core: CscapeInterface does `using RCall` at load time (R is never run by these scripts).
+    # libgl1/mesa/xvfb/xauth: CscapeInterface depends on GLMakie/WGLMakie; precompiling GLMakie
+    #   needs an OpenGL context, provided by xvfb-run below.
+    # time: /usr/bin/time -v for per-job wall time and peak memory.
+    # The rest: MathWorks' published runtime dependencies for MATLAB on Debian/Ubuntu
+    #   (mathworks-ref-arch/container-images matlab-deps), so the HOST's MATLAB can run in here.
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl bzip2 git time procps unzip make \
+        libsqlite3-0 r-base-core \
+        libgl1 libglx-mesa0 libgl1-mesa-dri libglu1-mesa xvfb xauth \
+        libasound2 libc6 libcairo2 libcairo-gobject2 libcap2 libcups2 libdrm2 libgbm1 \
+        libgdk-pixbuf-2.0-0 libglib2.0-0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libgtk-3-0 \
+        libice6 libnspr4 libnss3 libodbc2 libpam0g libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
+        libsndfile1 libsystemd0 libuuid1 libwayland-client0 libxcomposite1 libxcursor1 libxdamage1 \
+        libxfixes3 libxft2 libxinerama1 libxrandr2 libxt6 libxtst6 libxxf86vm1 libxext6 libxrender1 \
+        libxi6 locales net-tools zlib1g
+    sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- Python for CoralPop: micromamba + conda-forge, CoralPop-Engine/environment.yml's core packages
+    # pinned to the versions of the local `coral` env CoralPop was developed/tested with (2026-10-02) ----
+    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C /usr/local bin/micromamba
+    export MAMBA_ROOT_PREFIX=/opt/mamba
+    micromamba create -y -p /opt/pyenv -c conda-forge python=3.12 numpy=2.5.3 pandas=3.0.6 scipy=1.18.1 openpyxl pyyaml
+    micromamba clean -a -y
+    /opt/pyenv/bin/python -c "import numpy, pandas; print('python ok', numpy.__version__, pandas.__version__)"
+
+    # ---- Julia: instantiate + precompile the Code/ environment into a depot baked into the image ----
+    export JULIA_DEPOT_PATH=/opt/julia_depot
+    mkdir -p "$JULIA_DEPOT_PATH"
+    # The pkgimage cache must stay valid on the HPC's CPUs (otherwise Julia tries to recompile into
+    # this read-only depot at run time and fails): multiversioned for generic x86-64 plus the two
+    # common server generations. %environment sets the SAME value, which Julia needs to accept it.
+    export JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+    export JULIA_CONDAPKG_BACKEND=Null
+    export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
+    export CORALPOP_ENGINE_DIR=/opt/coral/repos/CoralPop-Engine
+    export COCONET_DIR=/opt/coral/repos/CoCoNet-python
+    export R_HOME=/usr/lib/R
+    export JULIA_PKG_PRECOMPILE_AUTO=0
+
+    cd /opt/coral/Code
+    julia --startup-file=no --project=/opt/coral/Code -e 'using Pkg; Pkg.instantiate(); Pkg.status()'
+    xvfb-run -a julia --startup-file=no --project=/opt/coral/Code -e 'using Pkg; Pkg.precompile()'
+    # Load everything the scripts load, so every package extension (ADRIA's five engine extensions,
+    # ADRIAviz's Makie extension) is precompiled too.
+    xvfb-run -a julia --startup-file=no --project=/opt/coral/Code -e '
+        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface, CoCoNetInterface
+        using ADRIAanalysis, DataFrames, JLD2, MAT, XLSX, CScape
+        import ADRIAviz, CairoMakie, GeoMakie, GraphMakie
+        println("engine packages ok; python: ", coralpop_python_info(), "; coconet: ", coconet_python_info())
+    '
+
+    chmod -R a+rX /opt/julia_depot /opt/coral /opt/pyenv
+
+%environment
+    # Writable depot FIRST (Julia only ever writes new caches to the first entry), the baked-in
+    # read-only depot second -- see ReefPartitioning.jl/hpc/ReefPartitioning.def for the reasoning.
+    export JULIA_DEPOT_PATH="${HOME}/.julia_coral:/opt/julia_depot"
+    export JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+    export JULIA_PROJECT=/opt/coral/Code
+    export JULIA_PKG_OFFLINE=true
+    export JULIA_CONDAPKG_BACKEND=Null
+    export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
+    export PYTHONDONTWRITEBYTECODE=1
+    export CORALPOP_ENGINE_DIR=/opt/coral/repos/CoralPop-Engine
+    export COCONET_DIR=/opt/coral/repos/CoCoNet-python
+    export REEFMOD_GBR_DIR=/opt/coral/repos/ReefMod-GBR
+    export R_HOME=/usr/lib/R
+    export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+%runscript
+    exec julia --startup-file=no --project=/opt/coral/Code "$@"
+
+%test
+    julia --startup-file=no --project=/opt/coral/Code -e '
+        using ADRIA, CscapeInterface, CoralPopInterface, KoraInterface, CORSETInterface, ReefModInterface, CoCoNetInterface
+        println("coral engines OK: ", coralpop_python_info())'
+
+%labels
+    Name coral_engines
+    JuliaVersion 1.12.5
+    Contents CoralBlox(ADRIA) C~scape CoralPop Kora CORSET ReefMod-interface CoCoNet; Test_domain
+
+%help
+    Seven coral engines for the CoralModelReview comparison. Scripts and the Julia environment are in
+    /opt/coral/Code, the engine sources in /opt/coral/repos (STAGED_SOURCES.md records their commits),
+    data in /opt/coral/data. Outputs must go to a bound, writable folder: set CMR_MODEL_RUNS_DIR.
+
+    Run one engine:
+        singularity exec --bind $RUNS coral_engines.sif env CMR_MODEL_RUNS_DIR=$RUNS \
+            julia /opt/coral/Code/08_RUN_ENGINE.jl kora
+    Analyse:
+        singularity exec --bind $RUNS coral_engines.sif env CMR_MODEL_RUNS_DIR=$RUNS \
+            julia /opt/coral/Code/09_ANALYSE_SIX_ENGINES.jl
+
+    ReefMod also needs the host MATLAB bound in and REEFMOD_MATLAB_EXE set -- see
+    /opt/coral/Code/hpc/RUNNING_ON_HPC.md and jobs/run_engine.slurm.

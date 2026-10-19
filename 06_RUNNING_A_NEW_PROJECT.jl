@@ -6,7 +6,7 @@ walkthrough, as an executable script instead of copy-pasteable snippets. Creates
 project under `../ModelRuns/` (see `paths.jl`), populates it, runs both engines, and plots the
 comparison. EVERYTHING it writes goes to `ModelRuns/<FPATH's folder name>/`: the C~scape project,
 the CoralBlox results (`coralblox/`), the saved result set (`my_run.jld2`), the sampled factor
-tables (`samples.jld2`, read by `07_COMPARE_THREE_ENGINES.jl`) and the figures (`images/`).
+tables (`samples.jld2`, read by `07_COMPARE_SIX_ENGINES.jl`) and the figures (`images/`).
 
 HOW TO USE: edit every value in the "CONFIG -- edit these" section below for your own domain/
 demography files, then run this file top to bottom from this folder (`julia --project=.
@@ -50,10 +50,13 @@ import YAXArrays
 # CONFIG -- edit these
 # =============================================================================
 
+## Any `_cfg("NAME", default)` below can be overridden with an environment variable `CMR_NAME`.
+_cfg(name, default) = get(ENV, "CMR_" * name, default)
+
 ## Where the six real, brms-fitted demography inputs actually live on disk today (NOT yet
 ## inside the project folder -- this script copies them in below). Map each C~scape functional
 ## type to its own source file; adjust names/date stamp to your own IPM-fitting workflow output.
-const DEMOG_SOURCE_DIR = raw"C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl\sandbox\ADRIAIntegration\projects\NewTest\data"
+const DEMOG_SOURCE_DIR = _cfg("DEMOG_SOURCE_DIR", raw"C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl\sandbox\ADRIAIntegration\projects\NewTest\data")
 const DEMOG_INPUT_NAMES = Dict(
     "acro_table"     => "demog_inputs_acro_tableALLDAT_260903.rds",
     "acro_corym"     => "demog_inputs_acro_corymALLDAT_260903.rds",
@@ -68,11 +71,11 @@ const DEMOG_INPUT_NAMES = Dict(
 ## so the slow, one-time R/brms conversion in step 1.2 is skipped. Only valid while DEMOG_INPUT_NAMES
 ## still name the same fitted files (same date stamp) -- the converted file names are derived from them.
 ## Set to `nothing` to always convert from scratch.
-const CONVERTED_DEMOG_DIR = raw"C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl\sandbox\ADRIAIntegration\projects\AdjustedRecruitment10_Disturbance\data"
+const CONVERTED_DEMOG_DIR = _cfg("CONVERTED_DEMOG_DIR", raw"C:\Users\vhaller\Documents\GitHub\CscapeInterface.jl\sandbox\ADRIAIntegration\projects\AdjustedRecruitment10_Disturbance\data")
 
 ## An ADRIA domain package on disk (a folder or a `.zip` ADRIA can load directly).
-const DOMAIN_PATH = raw"C:\Users\vhaller\Downloads\Moore_2025-08-22_v080"
-const RCP = "45"
+const DOMAIN_PATH = _cfg("DOMAIN_PATH", raw"C:\Users\vhaller\Downloads\Moore_2025-08-22_v080")
+const RCP = _cfg("RCP", "45")
 
 ## Base scenario metadata -- must overlap the domain's own timeframe (checked below).
 const REGION = "Offshore_Northern"
@@ -86,11 +89,11 @@ const BASE_SCENARIO_ID = 1010001
 ## instances baked into the domain's model spec (see `ADRIA.load_calib_params` /
 ## `ADRIA/src/io/calib_params.jl`). NOT a `Serialization.deserialize`-able Dict -- the file is
 ## a real NetCDF/HDF5 dataset.
-const CORALBLOX_CALIBRATION_OVERRIDES_PATH = "C:\\Users\\vhaller\\Australian Institute of Marine Science\\AIMS Decision Support - General\\01_PROJECTS\\RRAP M&DS\\ADRIA\\ADRIA Domain data\\CoralBlox-ADRIA GBR Calibrated Parameters\\2026-08-11\\calibrated_params.nc"
+const CORALBLOX_CALIBRATION_OVERRIDES_PATH = _cfg("CALIBRATION_PATH", "C:\\Users\\vhaller\\Australian Institute of Marine Science\\AIMS Decision Support - General\\01_PROJECTS\\RRAP M&DS\\ADRIA\\ADRIA Domain data\\CoralBlox-ADRIA GBR Calibrated Parameters\\2026-08-11\\calibrated_params.nc")
 
 ## Turn off DHW/wave/cyclone forcing to isolate intrinsic growth/survival/recruitment dynamics
 ## (matches `NoDisturbanceComparison.md`). Set to `false` to run with disturbances on instead.
-const NO_DISTURBANCE = false
+const NO_DISTURBANCE = _cfg("NO_DISTURBANCE", "false") == "true"
 
 ## Pin C~scape's mortality/growth/recruitment scale factors to their neutral (no-op) values
 ## instead of sampling them, for an apples-to-apples "intrinsic dynamics" comparison against
@@ -99,7 +102,7 @@ const NO_DISTURBANCE = false
 const NEUTRALISE_CSCAPE_SCALE_FACTORS = false
 
 ## ADRIA.sample's default Sobol' sampler requires a power of 2. (`CMR_N_SAMPLES` overrides it for a quick test run.)
-const N_SAMPLES = parse(Int, get(ENV, "CMR_N_SAMPLES", "8"))
+const N_SAMPLES = parse(Int, _cfg("N_SAMPLES", "8"))
 
 ## C~scape parallelism: one Distributed worker with N threads, so CScape.jl's own per-site
 ## `Threads.@threads` loop (annual_loop.jl) actually runs in parallel -- addprocs alone leaves
@@ -115,7 +118,7 @@ const CSCAPE_EXEFLAGS = ["-t", "4"]
 
 ## Everything this script writes lives under ModelRuns/<project name> (see paths.jl).
 ## (`CMR_PROJECT_NAME` overrides the name, e.g. to keep a test run apart from a real one.)
-const PROJECT_NAME = get(ENV, "CMR_PROJECT_NAME", "AdjustedRecruitment10_Disturbance")
+const PROJECT_NAME = _cfg("PROJECT_NAME", "AdjustedRecruitment10_Disturbance")
 const FPATH = model_run_dir(PROJECT_NAME)
 const DATA_DIR = joinpath(FPATH, "data")
 const IMAGES_DIR = joinpath(FPATH, "images")
@@ -254,7 +257,10 @@ dom_years = collect(ADRIA.timesteps(dom))
 ## draw instead (~14.6 DHW-weeks/yr). Cyclone draw 1 is already unremarkable (60th percentile,
 ## 0.044 vs domain median 0.042) so CYCLONE_IDX is left at 1. WAVE_IDX must stay 1 regardless --
 ## this domain has no wave data file, so wave_scens only has one (all-zero) member.
-const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) : (64, 1, 1)
+## `CMR_DHW_IDX`/`CMR_WAVE_IDX`/`CMR_CYCLONE_IDX` override the members (e.g. 40/16/1, the ADRIA Test
+## domain's median-severity DHW and wave members -- see engines.jl).
+const DHW_IDX, WAVE_IDX, CYCLONE_IDX = NO_DISTURBANCE ? (0, 0, 0) :
+    parse.(Int, (_cfg("DHW_IDX", "64"), _cfg("WAVE_IDX", "1"), _cfg("CYCLONE_IDX", "1")))
 
 dom_nodist = deepcopy(dom)
 ADRIA.fix_factor!(dom_nodist, :dhw_scenario, DHW_IDX)
@@ -477,9 +483,12 @@ if RUN_ADVANCED_PLOTS
     plot!(p_size, diam_cm, size_by_year[end, :]; label="$(years_cs[end])")
     savefig(p_size, joinpath(IMAGES_DIR, "newproject_size_structure.png"))
 
-    n_bins = size(out_array, 5)
-    bin_centres = range(-1, 1; length=n_bins)
-    cover_by_bin = dropdims(sum(out_array[:, :, COMBINED_IDX, :, :, 1]; dims=(2, 3)); dims=(2, 3))
+    ## The heat-tolerance classes are HeatToleranceGroups "-5_8_14" (section 1.3): 14 DHW offsets -5..+8.
+    ## VAL_COVER is % of each site's area, so weight sites by their area before summing.
+    bin_centres = range(-5, 8; length=14)
+    size(out_array, 5) == length(bin_centres) || error("Expected 14 heat-tolerance classes (HeatToleranceGroups -5_8_14).")
+    site_area = reshape(Float64.(dom.loc_data.area), 1, :, 1, 1)
+    cover_by_bin = dropdims(sum(out_array[:, :, COMBINED_IDX, :, :, CScape.Layout.VAL_COVER] .* site_area; dims=(2, 3)); dims=(2, 3))
     weighted_tol = vec(sum(cover_by_bin .* bin_centres'; dims=2) ./ sum(cover_by_bin; dims=2))
 
     p_tol = plot(years_cs, weighted_tol; label="C~scape mean thermal tolerance", lw=2)
