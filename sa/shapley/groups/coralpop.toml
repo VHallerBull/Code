@@ -1,0 +1,38 @@
+# CoralPop's groups (CoralPOP/CoralPop_sampled_parameters.md, section 2), added to the shared DHW and
+# domain groups. Edit freely: every input must end up in exactly one group per scheme.
+
+extends = "shared.toml"
+inert   = ["m_depth", "m_ub"]       # CoralPop reads neither depth nor wave exposure
+
+[[scheme]]
+name = "block"
+  [[scheme.group]]
+  name = "Model"
+  match = ["^(?!dhw_|m_)"]
+
+[[scheme]]
+name = "process"
+  [[scheme.group]]
+  name = "Growth"
+  match = ["^growth_rate_", "^gr_slope$", "^growth_parameter$", "^area_parameter$"]
+  [[scheme.group]]
+  name = "Whole-colony mortality"
+  match = ["^wcm_"]
+  [[scheme.group]]
+  name = "Partial mortality"
+  match = ["^pcm_"]
+  [[scheme.group]]
+  name = "Recruitment: brooders"
+  match = ["^brooder_"]
+  [[scheme.group]]
+  name = "Recruitment: spawners"
+  match = ["^egg_density_", "^spawning_rate_", "^fertilisation_rate$", "^settlement_", "^recruit_survival_scale$", "^post_settlement_survival_"]
+  [[scheme.group]]
+  name = "Bleaching"
+  match = ["^bleaching_", "_decline_coefficient$"]
+  [[scheme.group]]
+  name = "Rubble"
+  match = ["^rubble_breakdown_years$"]
+  [[scheme.group]]
+  name = "Stochasticity"
+  match = ["^seed$"]
