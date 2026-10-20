@@ -19,6 +19,8 @@ ENV["CMR_SA_RUN_SUBDIR"] = get(ENV, "CMR_SA_RUN_SUBDIR", "model_run_pf_pilot")  
 include(joinpath(@__DIR__, "..", "sa", "sa_common.jl"))
 include(joinpath(@__DIR__, "..", "sa", "models", "$MODEL.jl"))
 include(joinpath(@__DIR__, "dhw_generator.jl"))
+include(joinpath(@__DIR__, "sa_outputs.jl"))
+include(joinpath(@__DIR__, "adapters", "$MODEL.jl"))       # state_summary, PF_CLASS_OF_GROUP, PF_THERMAL_GROUPS
 using SAShE
 using Random: Xoshiro, randperm
 import JLD2
@@ -144,35 +146,18 @@ end
 ## One run
 ## ---------------------------------------------------------------------------------------------------
 
-"Outputs kept per run (domain level, habitable-area weighted with the run's own k x area)."
-const PF_OUTPUTS = [:relative_cover, :relative_shelter_volume, :coral_evenness, :juvenile_indicator]
-
 """
-    pf_run(dom, row, draws) -> (; series::Dict{Symbol,Vector}, dhw::Vector)
+    pf_run(dom, row, draws) -> (; state::Dict, dhw::Vector)
 
 Write the row's own DHW trajectory into `dom`'s slot `PF_DHW_SLOT` (in memory; `run_row` copies the
-domain before applying the multipliers), run the model, and return the domain series of `PF_OUTPUTS`
-plus the domain-mean DHW per year.
+domain before applying the multipliers), run the model, and return its state summary (sa_outputs.jl,
+built by the model's adapter from the in-memory output: nothing else of the run is kept) plus the
+domain-mean DHW per year.
 """
 function pf_run(dom, row, draws)
     traj = generate_dhw(row, Int(row[:dhw_weather]), draws)
     dom.dhw_scens.data[:, :, PF_DHW_SLOT] .= traj
-    return (; series=pf_series(run_row(dom, row)), dhw=vec(mean(traj; dims=2)))
-end
-
-"Domain series of `PF_OUTPUTS` from a `run_row` result (habitable-area weights of that run)."
-function pf_series(r)
-    ind = coralpop_indicators(r.out)
-    w = r.reef_k .* r.reef_area
-    w = w ./ sum(w)
-    series = Dict{Symbol,Vector{Float64}}()
-    for k in PF_OUTPUTS
-        A = getfield(ind, k)
-        ndims(A) == 2 || error("$k is not [years, reefs]")
-        series[k] = vec(sum(Float64.(A) .* reshape(w, 1, :); dims=2))
-    end
-    series[:relative_cover_engine] = Float64.(r.domain_series)
-    return series
+    return (; state=state_summary(run_row(dom, row)), dhw=vec(mean(traj; dims=2)))
 end
 
 ## ---------------------------------------------------------------------------------------------------
@@ -193,5 +178,5 @@ function zero_rows(design, n::Integer)::DataFrame
     return Z
 end
 
-"One zero-DHW run: `run_row` on the member-1 (all-zero) DHW, no trajectory generated."
-pf_run_zero(dom, row) = (; series=pf_series(run_row(dom, row)))
+"One zero-DHW run: `run_row` on the member-1 (all-zero) DHW, no trajectory generated; its state summary."
+pf_run_zero(dom, row) = (; state=state_summary(run_row(dom, row)))

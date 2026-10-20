@@ -63,4 +63,63 @@ include(joinpath(@__DIR__, "..", "pf_common.jl"))
         @test count(abs.(sh[others]) .> moe[others]) <= 0.1 * length(others)   # no effect: inside bounds
         @test abs(sum(sh) - sum(truth)) < 0.1 * sum(truth)
     end
+
+    @testset "outputs from the state summary (sa_outputs.jl)" begin
+        @test native_group_class([[3], [1, 2], [4, 5]]) == [2, 1, 3]                # CoralPop
+        @test native_group_class([[2], [1], [3], [5], [4], Int[]]) == [1, 1, 2, 3, 3, 0]   # CoCoNet, tt -> none
+        @test_throws ErrorException native_group_class([[2, 4]])                     # spans two classes
+        ## 2 years x 2 reefs, reef 2 has three times the habitable area
+        taxa = zeros(2, 3, 2)
+        taxa[:, 1, :] .= 0.1; taxa[:, 2, :] .= 0.2; taxa[:, 3, :] .= [0.1 0.3; 0.1 0.3]   # Branching, Foliose, Other
+        cc = class_covers(taxa, [2, 1, 3])
+        @test cc[:, 1, :] == taxa[:, 2, :] && cc[:, 2, :] == taxa[:, 1, :] && cc[:, 3, :] == taxa[:, 3, :]
+        S = Dict("cover" => dropdims(sum(taxa; dims=2); dims=2), "class_cover" => cc,
+            "juveniles" => fill(0.05, 2, 2), "diversity" => [0.4 0.6; 0.4 0.6], "weights" => [1.0, 3.0],
+            "thermal_mean" => [5.0 6.0; 7.0 8.0], "thermal_weight" => [1.0 1.0; 1.0 0.0])
+        Y = derive_outputs(S; thermal_groups=["a", "b"])
+        @test Y["relative_cover"] ≈ [0.25 * 0.4 + 0.75 * 0.6, 0.25 * 0.4 + 0.75 * 0.6]
+        tot = 0.25 * 0.4 + 0.75 * 0.6
+        @test Y["acropora_share"] ≈ fill(0.2 / tot, 2) && Y["massive_share"] ≈ fill((0.25 * 0.1 + 0.75 * 0.3) / tot, 2)
+        @test Y["coral_diversity"] ≈ fill(0.25 * 0.4 + 0.75 * 0.6, 2) && Y["relative_juveniles"] ≈ fill(0.05, 2)
+        @test Y["thermal_a"] == [5.0, 7.0] && isequal(Y["thermal_b"], [6.0, NaN])      # no weight -> missing
+        @test Y["spatial_cv"] ≈ fill(std([0.4, 0.6]) / 0.5, 2)
+        @test !haskey(derive_outputs(Dict(k => (k == "weights" ? v[1:1] : v[:, ntuple(_ -> :, ndims(v) - 2)..., 1:1])
+            for (k, v) in S if k in ("cover", "class_cover", "weights"))), "spatial_cv")   # one reef: no CV
+        @test output_order(keys(Y); thermal_groups=["b", "a"]) ==
+              ["relative_cover", "acropora_share", "massive_share", "relative_juveniles", "coral_diversity",
+               "thermal_b", "thermal_a", "spatial_cv"]
+        ## store -> chunk -> merge -> derive: the same outputs back
+        store = state_store(S, 3, 2)
+        store_state!(store, S, 2, 1)
+        @test all(isnan, store["cover"][1, :, :, 1]) && store["cover"][2, :, :, 1] == Float32.(S["cover"])
+        state = merge_states([Dict("S" => store, "base" => [4, 1])], 4, 3)
+        @test size(state["class_cover"]) == (4, 3, 2, 3, 2)
+        Ys = derive_stored(state; thermal_groups=["a", "b"])
+        @test isapprox(Ys["relative_cover"][4, 2, :], Y["relative_cover"]; rtol=1e-6)   # stored as Float32
+        @test all(isnan, Ys["relative_cover"][4, 1, :])
+        @test all(isnan, Ys["relative_cover"][2, :, :])                               # base sample never stored
+        ## years with a missing value are left out; thermal years together
+        Yv = Dict("relative_cover" => ones(2, 3, 2), "thermal_a" => ones(2, 3, 2), "thermal_b" => ones(2, 3, 2))
+        Yv["thermal_b"][1, 2, 2] = NaN
+        v = valid_years(Yv, collect(keys(Yv)), [1, 2])
+        @test v["relative_cover"] == [1, 2] && v["thermal_a"] == [1] && v["thermal_b"] == [1]
+        @test valid_years(Yv, collect(keys(Yv)), [2])["thermal_a"] == [1, 2]          # walk 1 not analysed
+    end
+
+    @testset "CoralPop state summary on real runs" begin
+        for domain in SA_DOMAINS
+            dom = load_sa_domain(domain)
+            draws = load_dhw_draws(joinpath(PF_INPUTS, domain, "dhw_draws.jld2"))
+            r = pf_run(dom, walk_rows(D, 1)[1, :], draws)
+            St = r.state
+            L = size(St["cover"], 2)
+            @test size(St["class_cover"]) == (26, 3, L) && length(St["weights"]) == L
+            @test maximum(abs.(dropdims(sum(St["class_cover"]; dims=2); dims=2) .- St["cover"])) < 1e-12
+            Yr = derive_outputs(St; thermal_groups=PF_THERMAL_GROUPS)
+            @test all(0 .<= Yr["acropora_share"] .<= 1) && all(0 .<= Yr["massive_share"] .<= 1)
+            @test haskey(Yr, "spatial_cv") == (L > 1) && !any(is_thermal, keys(Yr))   # CoralPop: no tolerance
+            z = pf_run_zero(dom, zero_rows(D, 1)[1, :])
+            @test derive_outputs(z.state)["relative_cover"][1] ≈ Yr["relative_cover"][1]   # same initial state
+        end
+    end
 end

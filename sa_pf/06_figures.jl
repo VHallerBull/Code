@@ -22,12 +22,15 @@ Per domain:
 
 using CSV, DataFrames, Statistics, CairoMakie
 import JLD2
+include(joinpath(@__DIR__, "sa_outputs.jl"))                # output names, order and labels
 
 const MODEL = get(ARGS, 1, "coralpop")
 const SNAP_YEARS = length(ARGS) > 1 ? parse.(Int, ARGS[2:end]) : [2030, 2050]
 const CMR = normpath(joinpath(@__DIR__, "..", ".."))
 const FOLDER = Dict("coralpop" => "CoralPOP")[MODEL]
-const ANALYSIS = joinpath(CMR, FOLDER, "model_run_pf_pilot", "analysis")
+"Root of the model folders (as sa_common.jl's SA_RUNS_ROOT: `CMR_SA_RUNS_DIR` overrides it)."
+const RUNS_ROOT = normpath(get(ENV, "CMR_SA_RUNS_DIR", CMR))
+const ANALYSIS = joinpath(RUNS_ROOT, FOLDER, "model_run_pf_pilot", "analysis")
 const OUT = mkpath(joinpath(ANALYSIS, "final_figures"))
 const LABEL = Dict("coralpop" => "CoralPop")[MODEL]
 
@@ -41,8 +44,6 @@ const BLOCK_COL = Dict("DHW" => CATS[2], "domain" => CATS[3], "model" => CATS[1]
 "Input bands are ordered: one hue, light to dark (ordinal ramp, no lighter than step 250)."
 const BAND_COL = ["#86b6ef", "#3987e5", "#184f95"]
 const SEQ = cgrad(["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
-const OUTPUT_LABEL = Dict("relative_cover" => "Relative cover", "relative_shelter_volume" => "Shelter volume",
-    "coral_evenness" => "Evenness", "juvenile_indicator" => "Juveniles")
 const MAX_SERIES = 7
 
 set_theme!(Theme(; fontsize=13, backgroundcolor=SURF, textcolor=INK,
@@ -63,8 +64,8 @@ for D in (E, Gr)
 end
 const BANDS = sort(unique(E.band))
 const DOMAINS = sort(unique(E.domain); rev=true)            # SingleReef first
-const OUTPUTS = [o for o in keys(OUTPUT_LABEL) if o in E.output] |> o -> sort(o; by=x -> findfirst(==(x),
-    ["relative_cover", "relative_shelter_volume", "coral_evenness", "juvenile_indicator"]))
+"Every output analysed (sa_outputs.jl order); each domain draws the ones it has (spatial_cv: NineReefs)."
+const OUTPUTS = output_order(unique(E.output))
 const NBASE = Dict(b => 256 for b in BANDS)                 # pilot; read from noise.csv below
 noise = CSV.read(joinpath(ANALYSIS, "noise.csv"), DataFrame)
 for g in groupby(noise, :band); NBASE[g.band[1]] = g.n_base[1]; end
@@ -87,7 +88,8 @@ const ZERO_COL = CATS[6]
 
 "Median line with 50 % and 95 % bands of `S` ([runs, years]) over `yrs`."
 function fan!(ax, yrs, S, col)
-    q(p) = [quantile(view(S, :, t), p) for t in axes(S, 2)]
+    ## a year left out of an output (missing values, e.g. a thermal group without weight) is a gap
+    q(p) = [(v = filter(!isnan, view(S, :, t)); isempty(v) ? NaN : quantile(v, p)) for t in axes(S, 2)]
     band!(ax, yrs, q(0.025), q(0.975); color=(col, 0.18))
     band!(ax, yrs, q(0.25), q(0.75); color=(col, 0.38))
     lines!(ax, yrs, q(0.5); color=col)
@@ -101,13 +103,14 @@ Only the A and B runs of each walk are used: 2N independent draws from the input
 function output_fans(dom)
     R, Z = Dict{Float64,Any}(), Dict{Float64,Any}()
     for b in BANDS
-        dir = joinpath(CMR, FOLDER, "model_run_pf_pilot", "band$(lpad(round(Int, 100b), 2, '0'))", dom)
+        dir = joinpath(RUNS_ROOT, FOLDER, "model_run_pf_pilot", "band$(lpad(round(Int, 100b), 2, '0'))", dom)
         isfile(joinpath(dir, "pf_results.jld2")) && (R[b] = JLD2.load(joinpath(dir, "pf_results.jld2")))
         isfile(joinpath(dir, "pf_zero.jld2")) && (Z[b] = JLD2.load(joinpath(dir, "pf_zero.jld2")))
     end
     isempty(R) && return
-    rows = [[(o, OUTPUT_LABEL[o], CATS[1]) for o in OUTPUTS]; [("dhw", "DHW (domain mean)", BLOCK_COL["DHW"])]]
-    fig = Figure(; size=(330 * length(BANDS) + 60, 210 * length(rows) + 90))
+    Ys = first(values(R))["Y"]
+    rows = [[(o, output_label(o), CATS[1]) for o in OUTPUTS if haskey(Ys, o)]; [("dhw", "DHW (domain mean)", BLOCK_COL["DHW"])]]
+    fig = Figure(; size=(max(330 * length(BANDS) + 60, 900), 210 * length(rows) + 90))
     for (i, (key, lab, col)) in enumerate(rows)
         axs = Axis[]
         for (j, b) in enumerate(BANDS)
@@ -119,7 +122,7 @@ function output_fans(dom)
             yrs = r["years"]
             ax = Axis(fig[i, j]; ylabel=j == 1 ? lab : "", xlabel=i == length(rows) ? "Year" : "",
                 title=i == 1 ? bandlab(b) : "")
-            if key != "dhw" && haskey(Z, b)                                 # zero-DHW reference, behind
+            if key != "dhw" && haskey(Z, b) && haskey(Z[b]["Y"], key)         # zero-DHW reference, behind
                 ZA = Z[b]["Y"][key]
                 zok = findall(n -> !any(isnan, @view ZA[n, :, :]), axes(ZA, 1))
                 fan!(ax, yrs, vcat(ZA[zok, 1, :], ZA[zok, 2, :]), ZERO_COL)
@@ -148,9 +151,10 @@ end
 for dom in DOMAINS
     output_fans(dom)
     Ed, Gd = E[E.domain .== dom, :], Gr[Gr.domain .== dom, :]
+    OUTS = [o for o in OUTPUTS if o in Ed.output]          # this domain's outputs
 
     ## 1. top 30 inputs, one column per band (bars + 95 % whiskers, coloured by block)
-    for out in OUTPUTS, yr in SNAP_YEARS
+    for out in OUTS, yr in SNAP_YEARS
         S = Ed[(Ed.output .== out) .& (Ed.year .== yr), :]
         nrow(S) == 0 && continue
         players = top_players(S, 30)
@@ -168,9 +172,9 @@ for dom in DOMAINS
         end
         Legend(fig[1, length(BANDS) + 1], [PolyElement(; color=BLOCK_COL[k]) for k in ("DHW", "domain", "model")],
             ["DHW", "domain", "model"])
-        Label(fig[0, :], title_(dom, "$(OUTPUT_LABEL[out]) in $yr, top 30 inputs (N = $(NBASE[BANDS[1]]) base samples)");
+        Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, top 30 inputs (N = $(NBASE[BANDS[1]]) base samples)");
             halign=:left, fontsize=14)
-        save_("inputs_top30_$(out)_$(yr)_$dom.png", fig, "$dom, $(OUTPUT_LABEL[out]) in $yr: Shapley share of " *
+        save_("inputs_top30_$(out)_$(yr)_$dom.png", fig, "$dom, $(output_label(out)) in $yr: Shapley share of " *
             "Var(Y) of the 30 inputs largest in any band, with 95 % intervals; one column per input band, same order.")
     end
 
@@ -182,14 +186,14 @@ for dom in DOMAINS
         fig = Figure(; size=(260 * length(BANDS) + 330, 760))
         local hm
         for (j, b) in enumerate(BANDS)
-            M = fill(NaN, length(OUTPUTS), 25)
-            for (i, o) in enumerate(OUTPUTS), (k, p) in enumerate(players)
+            M = fill(NaN, length(OUTS), 25)
+            for (i, o) in enumerate(OUTS), (k, p) in enumerate(players)
                 r = S[(S.band .== b) .& (S.output .== o) .& (S.player .== p), :]
                 nrow(r) == 1 && r.resolved[1] && (M[i, k] = r.share[1])
             end
-            ax = Axis(fig[1, j]; xticks=(1:length(OUTPUTS), [OUTPUT_LABEL[o] for o in OUTPUTS]), xticklabelrotation=pi / 4,
+            ax = Axis(fig[1, j]; xticks=(1:length(OUTS), [output_label(o) for o in OUTS]), xticklabelrotation=pi / 4,
                 yticks=(1:25, j == 1 ? players : fill("", 25)), yreversed=true, title=bandlab(b))
-            hm = heatmap!(ax, 1:length(OUTPUTS), 1:25, M; colormap=SEQ, colorrange=(0, cmax), nan_color=UNRESOLVED)
+            hm = heatmap!(ax, 1:length(OUTS), 1:25, M; colormap=SEQ, colorrange=(0, cmax), nan_color=UNRESOLVED)
         end
         Colorbar(fig[1, length(BANDS) + 1], hm; label="Share of Var(Y) (blank: interval includes 0)")
         Label(fig[0, :], title_(dom, "top 25 inputs per output, $yr"); halign=:left, fontsize=14)
@@ -198,7 +202,7 @@ for dom in DOMAINS
     end
 
     ## 3. top 30 inputs x years, one panel per band
-    for out in OUTPUTS
+    for out in OUTS
         S = Ed[Ed.output .== out, :]
         S26 = S[S.year .> minimum(S.year), :]                   # 2025 is the initial state: rank/scale without it
         players = top_players(S26, 30)
@@ -219,13 +223,13 @@ for dom in DOMAINS
             hm = heatmap!(ax, yrs, 1:30, M; colormap=SEQ, colorrange=(0, cmax), nan_color=UNRESOLVED, highclip=SEQ[end])
         end
         Colorbar(fig[1, length(BANDS) + 1], hm; label="Share of Var(Y) (blank: interval includes 0)")
-        Label(fig[0, :], title_(dom, "$(OUTPUT_LABEL[out]), top 30 inputs over time"); halign=:left, fontsize=14)
-        save_("inputs_time_$(out)_$dom.png", fig, "$dom, $(OUTPUT_LABEL[out]): share of Var(Y) per year of the 30 " *
+        Label(fig[0, :], title_(dom, "$(output_label(out)), top 30 inputs over time"); halign=:left, fontsize=14)
+        save_("inputs_time_$(out)_$dom.png", fig, "$dom, $(output_label(out)): share of Var(Y) per year of the 30 " *
             "inputs largest in any year and band (ranked and scaled on 2026-2050; 2025, the initial state, saturates); blank = not resolved.")
     end
 
     ## 4. group shares over time, stacked (top 7 groups + Other), one panel per band
-    for out in OUTPUTS
+    for out in OUTS
         S = Gd[Gd.output .== out, :]
         groups = top_players(S, MAX_SERIES)
         colors = Dict(g => CATS[i] for (i, g) in enumerate(groups))
@@ -252,8 +256,8 @@ for dom in DOMAINS
         Legend(fig[1, length(BANDS) + 1], [[PolyElement(; color=colors[g]) for g in groups]; PolyElement(; color=OTHER);
             LineElement(; color=INK, linestyle=:dash)], [groups; "Other ($(length(unique(S.player)) - length(groups)))";
             "sum of all effects"])
-        Label(fig[0, :], title_(dom, "$(OUTPUT_LABEL[out]), group shares over time ('process' groups)"); halign=:left, fontsize=14)
-        save_("groups_time_$(out)_$dom.png", fig, "$dom, $(OUTPUT_LABEL[out]): share of Var(Y) per group (sum of its " *
+        Label(fig[0, :], title_(dom, "$(output_label(out)), group shares over time ('process' groups)"); halign=:left, fontsize=14)
+        save_("groups_time_$(out)_$dom.png", fig, "$dom, $(output_label(out)): share of Var(Y) per group (sum of its " *
             "members' effects), stacked per year; dashed = sum of all effects (≈ 1 if converged). Small negative " *
             "estimates are drawn as 0.")
     end
@@ -261,31 +265,32 @@ for dom in DOMAINS
     ## 5. every group, all bands side by side, one panel per output (dots + 95 % whiskers)
     for yr in SNAP_YEARS
         S = Gd[Gd.year .== yr, :]
-        order = combine(groupby(S[S.output .== OUTPUTS[1], :], :player), :share => maximum => :pk)
+        order = combine(groupby(S[S.output .== OUTS[1], :], :player), :share => maximum => :pk)
         groups = sort(order, :pk; rev=true).player
         ng = length(groups)
-        fig = Figure(; size=(300 * length(OUTPUTS) + 400, 560))
-        for (i, out) in enumerate(OUTPUTS)
+        fig = Figure(; size=(300 * length(OUTS) + 400, 560))
+        for (i, out) in enumerate(OUTS)
             ax = Axis(fig[1, i]; yticks=(1:ng, i == 1 ? groups : fill("", ng)), yreversed=true, xlabel="Share of Var(Y)",
-                title=OUTPUT_LABEL[out], ygridvisible=false)
+                title=output_label(out), ygridvisible=false)
             vlines!(ax, [0.0]; color=AXIS)
             for (j, b) in enumerate(BANDS)
                 T = S[(S.output .== out) .& (S.band .== b), :]
+                nrow(T) == 0 && continue                            # year left out of this output
                 T = T[indexin(groups, T.player), :]
                 y = (1:ng) .+ (j - (length(BANDS) + 1) / 2) * 0.22
                 errorbars!(ax, T.share, y, T.share .- T.slb, T.sub .- T.share; direction=:x, color=BAND_COL[j], whiskerwidth=4)
                 scatter!(ax, T.share, y; color=BAND_COL[j], markersize=9, strokecolor=SURF, strokewidth=1.5)
             end
         end
-        Legend(fig[1, length(OUTPUTS) + 1], [MarkerElement(; marker=:circle, color=c, markersize=10) for c in BAND_COL[1:length(BANDS)]],
+        Legend(fig[1, length(OUTS) + 1], [MarkerElement(; marker=:circle, color=c, markersize=10) for c in BAND_COL[1:length(BANDS)]],
             bandlab.(BANDS); title="Input band", titlefont=:regular)
         Label(fig[0, :], title_(dom, "group shares in $yr by input band ('process' groups)"); halign=:left, fontsize=14)
         save_("groups_bands_$(yr)_$dom.png", fig, "$dom, $yr: share of Var(Y) per group with 95 % interval, for each " *
-            "input band; groups ordered by their largest share on $(OUTPUT_LABEL[OUTPUTS[1]]).")
+            "input band; groups ordered by their largest share on $(output_label(OUTS[1])).")
     end
 
     ## 6. within groups: the leading members of each group (one figure per band)
-    for out in OUTPUTS[1:1], yr in SNAP_YEARS[end:end], (j, b) in enumerate(BANDS)
+    for out in OUTS[1:1], yr in SNAP_YEARS[end:end], (j, b) in enumerate(BANDS)
         S = Ed[(Ed.output .== out) .& (Ed.year .== yr) .& (Ed.band .== b), :]
         gs = combine(groupby(S, :group), :share => sum => :tot, nrow => :n)
         gs = sort(gs[gs.n .> 1, :], :tot; rev=true)
@@ -303,9 +308,9 @@ for dom in DOMAINS
             errorbars!(ax, T.share, 1:nrow(T), T.share .- T.slb, T.sub .- T.share; direction=:x, color=INK2, whiskerwidth=4)
             vlines!(ax, [0.0]; color=AXIS)
         end
-        Label(fig[0, :], title_(dom, "$(OUTPUT_LABEL[out]) in $yr, leading members of each group, $(bandlab(b)) " *
+        Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, leading members of each group, $(bandlab(b)) " *
             "(group share in brackets)"); halign=:left, fontsize=14)
-        save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom.png", fig, "$dom, $(OUTPUT_LABEL[out]) in $yr, " *
+        save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom.png", fig, "$dom, $(output_label(out)) in $yr, " *
             "$(bandlab(b)): the 6 largest members of each group (share of Var(Y), 95 % intervals; each panel on its own " *
             "scale, to show the ranking within the group); the group's total share in brackets. Shares from the main design: interactions with inputs outside the group are split.")
     end

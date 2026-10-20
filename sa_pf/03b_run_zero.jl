@@ -4,9 +4,9 @@
     julia +release --project=Code/sa/shapley Code/sa_pf/03b_run_zero.jl <model> <proc> <n_procs> <band:domain> [band:domain ...]
 
 Same split as 03_run_chunk.jl (process `proc` takes base samples proc, proc + n_procs, ...), 2 runs per
-base sample. Writes <band>/<domain>/zero_chunks/proc_<pp>_of_<nn>.jld2 (`base`, `Y` = Dict output =>
-[2, years, n_base_here] for the A and B sets, `failed`, `seconds`, `n_runs`, `years`); skipped if it
-exists. These runs give the reference trajectories without heat stress (06_figures.jl); they are not part
+base sample. Writes <band>/<domain>/zero_chunks/proc_<pp>_of_<nn>.jld2 (`base`, `S` = the state
+summaries, Dict key => [2, dims..., n_base_here] for the A and B sets, `failed`, `seconds`, `n_runs`,
+`years`, `thermal_groups`); skipped if it exists. These runs give the reference trajectories without heat stress (06_figures.jl); they are not part
 of the Shapley analysis.
 =#
 
@@ -27,7 +27,7 @@ for (band, domain) in JOBS
     dom = get!(() -> load_sa_domain(domain), DOMS, domain)
     years = collect(ADRIA.timesteps(dom))
     bases = collect(PROC:N_PROCS:design.n_base)
-    Y = Dict(string(k) => fill(NaN, 2, length(years), length(bases)) for k in [PF_OUTPUTS; :relative_cover_engine])
+    S = nothing                      # state summaries: key => [2, dims..., walks], allocated at the first run
     failed = Int[]
     t0 = time()
     for (j, n) in enumerate(bases)
@@ -35,9 +35,8 @@ for (band, domain) in JOBS
         try
             for i in 1:2
                 r = pf_run_zero(dom, rows[i, :])
-                for (k, v) in r.series
-                    Y[string(k)][i, :, j] = v
-                end
+                S === nothing && (S = state_store(r.state, 2, length(bases)))
+                store_state!(S, r.state, i, j)
             end
         catch err
             push!(failed, n)
@@ -45,7 +44,8 @@ for (band, domain) in JOBS
         end
     end
     seconds = time() - t0
-    JLD2.jldsave(out * ".tmp"; base=bases, Y, failed, seconds, n_runs=2 * length(bases), years)
+    JLD2.jldsave(out * ".tmp"; base=bases, S, failed, seconds, n_runs=2 * length(bases), years,
+        thermal_groups=PF_THERMAL_GROUPS)
     mv(out * ".tmp", out; force=true)
     println("wrote $out ($(2 * length(bases)) zero-DHW runs, $(length(failed)) failed, $(round(seconds; digits=1)) s)")
 end

@@ -25,16 +25,16 @@ using CSV
 
 const OUT = mkpath(joinpath(SA_RUNS_ROOT, MODEL_FOLDERS[MODEL], PF_SUBDIR, "analysis"))
 const FIG = mkpath(joinpath(OUT, "figures"))
-const OUTPUTS = ["relative_cover", "relative_shelter_volume", "coral_evenness", "juvenile_indicator"]
-const OUTPUT_LABEL = Dict("relative_cover" => "Relative cover", "relative_shelter_volume" => "Shelter volume",
-    "coral_evenness" => "Evenness", "juvenile_indicator" => "Juveniles")
+## The outputs are whatever 04_collect.jl derived (sa_outputs.jl): they differ between models (thermal
+## tolerance, juveniles) and domains (spatial_cv only with more than one reef).
 const DELTAS = [0.05, 0.02, 0.01]
 const TOP_K = 10
 const SCHEME = "process"
 "CPU seconds per run on the AIMS HPC (the 8192-run given-data runs), for the cost table."
 const HPC_S_PER_RUN = Dict("SingleReef_SobolDHW" => 0.066, "NineReefs_SobolDHW" => 0.236)
 
-n_required(σ, vy, δ) = ceil(Int, (1.96 * σ / (δ * vy))^2)
+"Base samples for a 95 % half-width of δ Var(Y); 0 where the output does not vary (nothing to resolve)."
+n_required(σ, vy, δ) = vy > 0 && isfinite(σ) ? ceil(Int, (1.96 * σ / (δ * vy))^2) : 0
 
 "Per-base-sample increments f [d, N] and SAShE's effects / bounds for one output column `y` (walk order)."
 function increments(S, y, N)
@@ -47,6 +47,7 @@ effects_rows, noise_rows, req_rows, group_rows = NamedTuple[], NamedTuple[], Nam
 running = Dict{Tuple{Float64,String,String},Any}()       # (band, domain, output) -> cumulative curves at 2050
 running_top = Dict{Tuple{Float64,String},Any}()          # (band, domain) -> running shares, relative cover
 seconds_per_run = Dict{Tuple{Float64,String},Float64}()
+dropped_rows = NamedTuple[]                              # years left out of an output (missing values)
 
 for band in BANDS
     design = JLD2.load(joinpath(pf_band_dir(MODEL, band), "design_pf.jld2"))
@@ -63,9 +64,15 @@ for band in BANDS
         N = length(ok)
         S = CallablePickAndFreezeSample(design["A"][ok, :], design["B"][ok, :], design["perms"][ok, :])
         println("$(band_label(band))/$domain: $N walks")
-        for out in OUTPUTS
+        outs = output_order(keys(R["Y"]); thermal_groups=get(R, "thermal_groups", String[]))
+        vy_idx = valid_years(R["Y"], outs, ok)
+        for out in outs
             Yall = R["Y"][out][ok, :, :]                                   # [N, d + 1, T]
-            for (t, yr) in enumerate(years)
+            for t in setdiff(eachindex(years), vy_idx[out])
+                push!(dropped_rows, (; band, domain, output=out, year=years[t]))
+            end
+            for t in vy_idx[out]
+                yr = years[t]
                 Ym = Yall[:, :, t]
                 y = vec(permutedims(Ym))                                   # walk by walk, SAShE's order
                 vy = var(vcat(Ym[:, 1], Ym[:, end]))                       # A and B runs: 2N independent
@@ -107,6 +114,11 @@ end
 
 effects = DataFrame(effects_rows)
 noise = DataFrame(noise_rows)
+dropped = DataFrame(dropped_rows)
+isempty(dropped_rows) || println("years left out (missing values): ", nrow(dropped), " output-years; see dropped_years.csv")
+CSV.write(joinpath(OUT, "dropped_years.csv"), isempty(dropped_rows) ?
+    DataFrame(band=Float64[], domain=String[], output=String[], year=Int[]) : dropped)
+const OUTPUTS = output_order(unique(noise.output))
 CSV.write(joinpath(OUT, "effects.csv"), effects)
 CSV.write(joinpath(OUT, "noise.csv"), noise)
 CSV.write(joinpath(OUT, "group_effects.csv"), DataFrame(group_rows))
@@ -139,17 +151,18 @@ bands_present = sort(unique(noise.band))
 ## 1. paper-style convergence: sum of effects vs variance, cumulative over base samples (final year)
 for domain in SA_DOMAINS
     any(k -> k[2] == domain, keys(running)) || continue
-    fig = Figure(; size=(330 * length(bands_present) + 40, 230 * length(OUTPUTS) + 60))
-    for (i, out) in enumerate(OUTPUTS), (j, band) in enumerate(bands_present)
+    douts = [o for o in OUTPUTS if any(k -> k[2] == domain && k[3] == o, keys(running))]
+    fig = Figure(; size=(330 * length(bands_present) + 40, 230 * length(douts) + 60))
+    for (i, out) in enumerate(douts), (j, band) in enumerate(bands_present)
         haskey(running, (band, domain, out)) || continue
         r = running[(band, domain, out)]
         n = 1:length(r.cs)
-        ax = Axis(fig[i, j]; xscale=log10, xlabel=i == length(OUTPUTS) ? "Base samples" : "",
-            ylabel=j == 1 ? OUTPUT_LABEL[out] : "", title=i == 1 ? "±$(round(Int, 100band)) %" : "")
+        ax = Axis(fig[i, j]; xscale=log10, xlabel=i == length(douts) ? "Base samples" : "",
+            ylabel=j == 1 ? output_label(out) : "", title=i == 1 ? "±$(round(Int, 100band)) %" : "")
         lines!(ax, n, r.cs; color=CATS[1], label="Sum of Shapley effects")
         lines!(ax, n, r.cv; color=CATS[8], label="Variance of Y")
     end
-    Legend(fig[length(OUTPUTS) + 1, :], [LineElement(; color=CATS[1], linewidth=3), LineElement(; color=CATS[8], linewidth=3)],
+    Legend(fig[length(douts) + 1, :], [LineElement(; color=CATS[1], linewidth=3), LineElement(; color=CATS[8], linewidth=3)],
         ["Sum of Shapley effects (cumulative)", "Variance of Y (cumulative)"]; orientation=:horizontal)
     Label(fig[0, :], "$MODEL_LABEL / $domain: pick-and-freeze convergence, year 2050"; halign=:left, fontsize=14)
     savefig_("convergence_sum_$domain.png", fig, "$domain, year 2050: running estimate of the sum of all " *
@@ -189,20 +202,25 @@ end
 for domain in SA_DOMAINS
     sub = noise[noise.domain .== domain, :]
     nrow(sub) == 0 && continue
-    fig = Figure(; size=(1250, 700))
-    for (i, out) in enumerate(OUTPUTS)
+    douts = [o for o in OUTPUTS if o in sub.output]
+    nrows_ = cld(length(douts), 2)
+    fig = Figure(; size=(1250, 350 * nrows_))
+    for (i, out) in enumerate(douts)
         ax = Axis(fig[fld(i - 1, 2) + 1, mod(i - 1, 2) + 1]; yscale=log10, xlabel="Year",
-            ylabel="Base samples for ±0.02", title=OUTPUT_LABEL[out])
+            ylabel="Base samples for ±0.02", title=output_label(out))
         for (j, band) in enumerate(bands_present)
             g = sort(sub[(sub.output .== out) .& (sub.band .== band), :], :year)
-            lines!(ax, g.year, n_required.(g.sigma_max_input, g.var_y, 0.02); color=CATS[j])
-            lines!(ax, g.year, n_required.(g.sigma_max_group, g.var_y, 0.02); color=CATS[j], linestyle=:dash)
+            for (col, ls) in ((:sigma_max_input, :solid), (:sigma_max_group, :dash))
+                n = n_required.(g[!, col], g.var_y, 0.02)
+                keep = n .> 0                                      # log axis: years without variance left out
+                any(keep) && lines!(ax, g.year[keep], n[keep]; color=CATS[j], linestyle=ls)
+            end
         end
     end
     entries = [[LineElement(; color=CATS[j], linewidth=3) for j in eachindex(bands_present)];
                [LineElement(; color=INK2), LineElement(; color=INK2, linestyle=:dash)]]
     labels = [["±$(round(Int, 100b)) %" for b in bands_present]; ["every input", "every group ($SCHEME)"]]
-    Legend(fig[1:2, 3], entries, labels)
+    Legend(fig[1:nrows_, 3], entries, labels)
     Label(fig[0, :], "$MODEL_LABEL / $domain: base samples for a 95 % half-width of 0.02 Var(Y)"; halign=:left, fontsize=14)
     savefig_("required_base_samples_$domain.png", fig, "$domain: base samples needed per year so that every " *
         "input's (solid) or every group's (dashed) 95 % half-width is 0.02 of Var(Y); runs = base samples x 177.")

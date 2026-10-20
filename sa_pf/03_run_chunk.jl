@@ -6,8 +6,9 @@
 Process `proc` (1..n_procs) takes base samples proc, proc + n_procs, ... of each job (a whole walk of
 d + 1 runs each), e.g. `03_run_chunk.jl coralpop 3 12 0.1:SingleReef_SobolDHW 0.5:NineReefs_SobolDHW`.
 Each job writes <band>/<domain>/chunks/proc_<pp>_of_<nn>.jld2 (skipped if it exists, so a rerun resumes):
-`base` (base-sample indices), `Y` (Dict output => [d + 1, years, n_base_here]), `dhw` (domain-mean DHW,
-same shape), `failed` (base samples with a failed run), `seconds`, `n_runs`, `years`.
+`base` (base-sample indices), `S` (the runs' state summaries, sa_outputs.jl: Dict key => [d + 1, dims...,
+n_base_here]), `dhw` (domain-mean DHW, [d + 1, years, n_base_here]), `failed` (base samples with a failed
+run), `seconds`, `n_runs`, `years`, `thermal_groups`. No other run output is kept.
 CoralPop runs through Python, so parallelism is one process per share (no threads).
 =#
 
@@ -31,7 +32,7 @@ for (band, domain) in JOBS
     years = collect(ADRIA.timesteps(dom))
     T, d = length(years), ncol(design.A)
     bases = collect(PROC:N_PROCS:design.n_base)
-    Y = Dict(string(k) => fill(NaN, d + 1, T, length(bases)) for k in [PF_OUTPUTS; :relative_cover_engine])
+    S = nothing                      # state summaries: key => [d + 1, dims..., walks], allocated at the first run
     dhw = fill(NaN, d + 1, T, length(bases))
     failed = Int[]
     t0 = time()
@@ -40,9 +41,8 @@ for (band, domain) in JOBS
         try
             for i in 1:nrow(rows)
                 r = pf_run(dom, rows[i, :], draws)
-                for (k, v) in r.series
-                    Y[string(k)][i, :, j] = v
-                end
+                S === nothing && (S = state_store(r.state, d + 1, length(bases)))
+                store_state!(S, r.state, i, j)
                 dhw[i, :, j] = r.dhw
             end
         catch err
@@ -55,7 +55,8 @@ for (band, domain) in JOBS
         flush(stdout)
     end
     seconds = time() - t0
-    JLD2.jldsave(out * ".tmp"; base=bases, Y, dhw, failed, seconds, n_runs=length(bases) * (d + 1), years)
+    JLD2.jldsave(out * ".tmp"; base=bases, S, dhw, failed, seconds, n_runs=length(bases) * (d + 1), years,
+        thermal_groups=PF_THERMAL_GROUPS)
     mv(out * ".tmp", out; force=true)
     println("wrote $out ($(length(bases)) walks, $(length(failed)) failed, $(round(seconds / 60; digits=1)) min)")
 end
