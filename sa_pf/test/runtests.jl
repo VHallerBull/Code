@@ -36,6 +36,22 @@ include(joinpath(@__DIR__, "..", "pf_common.jl"))
         @test abs(mean(pos1) - 88.5) < 3 && abs(std(pos1) - std(1:176)) < 3
     end
 
+    @testset "zero-DHW design" begin
+        Z = pf_design(0.5, 64; set="zero")
+        dz = ncol(Z.A)
+        @test dz == d - 8 && !any(startswith("dhw_"), names(Z.A)) && Z.n_shared == 13
+        @test Z.A == select(D.A, Not(r"^dhw_")) && Z.B == select(D.B, Not(r"^dhw_"))   # same parameter sets
+        S = CallablePickAndFreezeSample(Z.A, Z.B, Z.perms)
+        W = walk_rows(Z, 9)
+        @test Matrix(select(W, names(Z.A))) == Matrix{Float64}(S.samples[(8 * (dz + 1) + 1):(9 * (dz + 1)), :])
+        @test all(W.dhw_scenario .== 1.0)                     # the all-zero member
+        @test all(walk_rows(D, 9).dhw_scenario .== PF_DHW_SLOT)
+        ## the 13 shared (domain) inputs walk in the same order as in any other model's zero design
+        rel(P, n) = filter(<=(13), P[n, :])
+        Q = pf_permutations(64, 13, 40)
+        @test all(rel(Z.perms, n) == rel(Q, n) for n in 1:64)
+    end
+
     @testset "A and B independent, inputs independent" begin
         Dc = pf_design(0.5, 4096)
         c = [cor(Dc.A[!, k], Dc.B[!, k]) for k in names(Dc.A)]
