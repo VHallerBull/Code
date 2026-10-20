@@ -1,0 +1,91 @@
+Bootstrap: docker
+From: julia:1.12.5-bookworm
+
+# CoralPop-only image for the Sobol' sensitivity runs (Code/sa), separate from coral_engines.sif: Julia
+# 1.12.5 with Code/sa/models/coralpop instantiated and precompiled, and a Python 3.12 environment for the
+# CoralPop engine. No R, MATLAB libraries or GL stack (those are only needed by other engines). Domains and
+# designs are NOT inside: they are bound in at run time (jobs/sa_common.sh).
+#
+# Do not build this file directly from the repo: run Code/sa/hpc/stage_model.sh coralpop first (it
+# assembles ~/sa-build/coralpop/sa from the local clones), then build_model_image.sh coralpop. Full
+# instructions: Code/sa/hpc/RUNNING_SA_ON_HPC.md.
+
+%files
+    sa /opt/sa
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    # apt retries a dropped connection a few times before giving up
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
+    apt-get update
+    # libsqlite3-0: PROJ_jll (via ArchGDAL, an ADRIA dependency) dlopen's the system libsqlite3.
+    # time: /usr/bin/time -v for per-job wall time and peak memory.
+    apt-get install -y --no-install-recommends ca-certificates curl bzip2 git time procps libsqlite3-0 locales
+    sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen
+    rm -rf /var/lib/apt/lists/*
+
+    # ---- Python for CoralPop: the same pinned conda-forge packages as coral_engines.def ----
+    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C /usr/local bin/micromamba
+    export MAMBA_ROOT_PREFIX=/opt/mamba
+    micromamba create -y -p /opt/pyenv -c conda-forge python=3.12 numpy=2.5.3 pandas=3.0.6 scipy=1.18.1 openpyxl pyyaml
+    micromamba clean -a -y
+    /opt/pyenv/bin/python -c "import numpy, pandas; print('python ok', numpy.__version__, pandas.__version__)"
+
+    # ---- Julia: instantiate + precompile the model environment into a depot baked into the image ----
+    export JULIA_DEPOT_PATH=/opt/julia_depot
+    mkdir -p "$JULIA_DEPOT_PATH"
+    # Valid on the HPC's CPUs without recompiling into this read-only depot (same as coral_engines.def;
+    # %environment sets the SAME value).
+    export JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+    export JULIA_CONDAPKG_BACKEND=Null
+    export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
+    export CORALPOP_ENGINE_DIR=/opt/sa/repos/CoralPop-Engine
+    export JULIA_PKG_PRECOMPILE_AUTO=0
+
+    ENV_DIR=/opt/sa/Code/sa/models/coralpop
+    # Downloads retry: a dropped connection (DNS / SSL errors) otherwise fails the whole build.
+    for attempt in 1 2 3; do
+        julia --startup-file=no --project=$ENV_DIR -e 'using Pkg; Pkg.instantiate(); Pkg.status()' && break
+        [ "$attempt" = 3 ] && { echo "Pkg.instantiate failed 3 times" >&2; exit 1; }
+        echo "Pkg.instantiate failed (attempt $attempt), retrying in 60 s"; sleep 60
+    done
+    julia --startup-file=no --project=$ENV_DIR -e 'using Pkg; Pkg.precompile()'
+    # Load everything the scripts load, so package extensions are precompiled too.
+    julia --startup-file=no --project=$ENV_DIR -e '
+        using ADRIA, ADRIAanalysis, CoralPopInterface, CairoMakie, CSV, DataFrames, Distributions, JLD2
+        println("packages ok; python: ", coralpop_python_info())
+    '
+
+    chmod -R a+rX /opt/julia_depot /opt/sa /opt/pyenv
+
+%environment
+    # Writable depot FIRST (Julia only writes new caches to the first entry), the baked-in one second.
+    export JULIA_DEPOT_PATH="${HOME}/.julia_sa_coralpop:/opt/julia_depot"
+    export JULIA_CPU_TARGET="generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+    export JULIA_PROJECT=/opt/sa/Code/sa/models/coralpop
+    export JULIA_PKG_OFFLINE=true
+    export JULIA_CONDAPKG_BACKEND=Null
+    export JULIA_PYTHONCALL_EXE=/opt/pyenv/bin/python
+    export PYTHONDONTWRITEBYTECODE=1
+    export CORALPOP_ENGINE_DIR=/opt/sa/repos/CoralPop-Engine
+    export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+%runscript
+    exec julia --startup-file=no "$@"
+
+%test
+    julia --startup-file=no -e 'using ADRIA, CoralPopInterface; println("CoralPop SA image OK: ", coralpop_python_info())'
+
+%labels
+    Name coralpop_sa
+    JuliaVersion 1.12.5
+    Contents CoralPop (Python engine) + CoralPopInterface + ADRIA; Code/sa Sobol' scripts
+
+%help
+    CoralPop runs for the Sobol' sensitivity analysis. Scripts in /opt/sa/Code/sa, sources in
+    /opt/sa/repos (STAGED_SOURCES.md records their commits). Domains and designs are bound in; outputs
+    go to the bound folder. See jobs/sa_chunk.slurm, e.g.:
+
+        singularity exec --bind $SA_BASE coralpop_sa.sif env CMR_SA_DOMAINS_DIR=$SA_BASE/domains \
+            CMR_SA_RUNS_DIR=$SA_BASE julia /opt/sa/Code/sa/05_run_chunk.jl coralpop SingleReef_SobolDHW main 1 1024

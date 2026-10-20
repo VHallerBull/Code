@@ -1,0 +1,7 @@
+# Local clones (under C:\Users\vhaller\Documents\GitHub) staged into the CoralPop SA image by
+# Code/sa/hpc/stage_model.sh coralpop -- every path dependency of models/coralpop/Manifest.toml, plus
+# the Python engine.
+ADRIA.jl
+ADRIAIndicators.jl
+CoralPopInterface.jl
+CoralPop-Engine
