@@ -112,6 +112,34 @@ const MEAN_COL = CATS[2]
 period_label(p) = replace(p, "-" => "–")
 
 """
+Top-30 figure: the 30 inputs largest in any band, one column per band, same order (bars + 95 % whiskers,
+coloured by block). `S`: one row per input and band (`player`, `band`, `share`, `slb`, `sub`) of one
+output and year or period.
+"""
+function top30_fig(S, dom, ttl, fname, what)
+    nrow(S) == 0 && return
+    players = top_players(S, 30)
+    fig = Figure(; size=(max(330 * length(BANDS) + 330, 820), 780))
+    xmax = maximum(S.sub[in.(S.player, Ref(players))]) * 1.05
+    xmin = min(0.0, minimum(S.slb[in.(S.player, Ref(players))]))
+    for (j, b) in enumerate(BANDS)
+        T = S[S.band .== b, :]
+        T = T[indexin(players, T.player), :]
+        ax = Axis(fig[1, j]; yticks=(1:30, j == 1 ? players : fill("", 30)), yreversed=true,
+            xlabel="Share of Var(Y)", title=bandlab(b), limits=((xmin, xmax), nothing), ygridvisible=false)
+        barplot!(ax, 1:30, T.share; direction=:x, color=[BLOCK_COL[block(p)] for p in T.player], gap=0.25)
+        errorbars!(ax, T.share, 1:30, T.share .- T.slb, T.sub .- T.share; direction=:x, color=INK2, whiskerwidth=5)
+        vlines!(ax, [0.0]; color=AXIS)
+    end
+    keys_ = [k for k in ("DHW", "domain", "model") if any(p -> block(p) == k, players)]   # zero DHW: no DHW inputs
+    Legend(fig[1, length(BANDS) + 1], [PolyElement(; color=BLOCK_COL[k]) for k in keys_], keys_)
+    Label(fig[0, :], title_(dom, "top 30 inputs (N = $(NBASE[BANDS[1]]) base samples)\n$ttl"); halign=:left,
+        justification=:left, fontsize=14)
+    save_(fname, fig, "$dom, $what: Shapley share of Var(Y) of the 30 inputs largest in any band, with 95 % " *
+        "intervals; one column per input band, same order.")
+end
+
+"""
 Within-group figure: the 6 largest members of each group with more than one member, one panel per
 group on its own scale, the group's total share in brackets. `S`: one row per input (`player`, `group`,
 `share`, `slb`, `sub`) of one output, band and year or period.
@@ -217,29 +245,21 @@ for dom in DOMAINS, set in SETS
     nrow(Ed) == 0 && continue
     OUTS = [o for o in OUTPUTS if o in Ed.output]          # this domain's outputs
 
-    ## 1. top 30 inputs, one column per band (bars + 95 % whiskers, coloured by block)
+    ## 1. top 30 inputs, one column per band (bars + 95 % whiskers, coloured by block): snapshot years, and
+    ## the periods' variance-weighted shares
     for out in OUTS, yr in SNAP_YEARS
         S = Ed[(Ed.output .== out) .& (Ed.year .== yr), :]
-        nrow(S) == 0 && continue
-        players = top_players(S, 30)
-        fig = Figure(; size=(330 * length(BANDS) + 330, 760))
-        xmax = maximum(S.sub[in.(S.player, Ref(players))]) * 1.05
-        xmin = min(0.0, minimum(S.slb[in.(S.player, Ref(players))]))
-        for (j, b) in enumerate(BANDS)
-            T = S[S.band .== b, :]
-            T = T[indexin(players, T.player), :]
-            ax = Axis(fig[1, j]; yticks=(1:30, j == 1 ? players : fill("", 30)), yreversed=true,
-                xlabel="Share of Var(Y)", title=bandlab(b), limits=((xmin, xmax), nothing), ygridvisible=false)
-            barplot!(ax, 1:30, T.share; direction=:x, color=[BLOCK_COL[block(p)] for p in T.player], gap=0.25)
-            errorbars!(ax, T.share, 1:30, T.share .- T.slb, T.sub .- T.share; direction=:x, color=INK2, whiskerwidth=5)
-            vlines!(ax, [0.0]; color=AXIS)
+        top30_fig(S, dom, "$(output_label(out)) in $yr", "inputs_top30_$(out)_$(yr)_$dom$(SFX[]).png",
+            "$(output_label(out)) in $yr")
+    end
+    if HAS_PERIODS
+        Pt = P[(P.domain .== dom) .& (P.set .== set) .& (P.kind .== "variance-weighted"), :]
+        for out in OUTS, p in ("2025-2035", "2036-2050", "2025-2050")
+            S = Pt[(Pt.output .== out) .& (Pt.period .== p), :]
+            top30_fig(S, dom, "$(output_label(out)) $(period_label(p)) (variance-weighted)",
+                "inputs_top30_$(out)_$(p)_$dom$(SFX[]).png", "$(output_label(out)) over $(period_label(p)) " *
+                "(variance-weighted: sum of the effects over the period's years / sum of Var(Y))")
         end
-        Legend(fig[1, length(BANDS) + 1], [PolyElement(; color=BLOCK_COL[k]) for k in ("DHW", "domain", "model")],
-            ["DHW", "domain", "model"])
-        Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, top 30 inputs (N = $(NBASE[BANDS[1]]) base samples)");
-            halign=:left, fontsize=14)
-        save_("inputs_top30_$(out)_$(yr)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)) in $yr: Shapley share of " *
-            "Var(Y) of the 30 inputs largest in any band, with 95 % intervals; one column per input band, same order.")
     end
 
     ## 2. top 25 inputs x outputs, one panel per band (unresolved cells grey)
