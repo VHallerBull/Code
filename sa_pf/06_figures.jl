@@ -94,6 +94,23 @@ end
 E.player = E.input
 Gr.player = Gr.group
 
+## period aggregates (05_analyse.jl): variance-weighted shares per period and the time-mean outputs
+const HAS_PERIODS = isfile(joinpath(ANALYSIS, "period_effects.csv"))
+P, Pg = if HAS_PERIODS
+    p, pg = (CSV.read(joinpath(ANALYSIS, f), DataFrame) for f in ("period_effects.csv", "period_group_effects.csv"))
+    p.player, pg.player = p.input, pg.group
+    for D in (p, pg)
+        D.slb, D.sub = D.lb ./ D.var_y, D.ub ./ D.var_y
+    end
+    p, pg
+else
+    DataFrame(), DataFrame()
+end
+"Period series of the period figures: the two sub-periods (light, dark blue), the whole period (ink), the time mean (orange)."
+const PERIOD_COL = Dict("2025-2035" => BAND_COL[1], "2036-2050" => BAND_COL[3], "2025-2050" => INK2)
+const MEAN_COL = CATS[2]
+period_label(p) = replace(p, "-" => "–")
+
 "Zero-DHW reference colour (categorical slot 6, as the green control band of Code/sa/07_analyse.jl)."
 const ZERO_COL = CATS[6]
 
@@ -332,6 +349,53 @@ for dom in DOMAINS, set in SETS
         save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)) in $yr, " *
             "$(bandlab(b)): the 6 largest members of each group (share of Var(Y), 95 % intervals; each panel on its own " *
             "scale, to show the ranking within the group); the group's total share in brackets. Shares from the main design: interactions with inputs outside the group are split.")
+    end
+
+    ## 7. period aggregates: groups and top inputs, one series per period (+ the time-mean output), per band
+    HAS_PERIODS || continue
+    Pd = P[(P.domain .== dom) .& (P.set .== set), :]
+    Pgd = Pg[(Pg.domain .== dom) .& (Pg.set .== set), :]
+    for out in OUTS, b in BANDS
+        sel(D) = D[(D.band .== b) .& (((D.output .== out) .& (D.kind .== "variance-weighted")) .| (D.output .== "mean_$out")), :]
+        Si, Sg = sel(Pd), sel(Pgd)
+        nrow(Sg) == 0 && continue
+        ## series: (period, legend label, colour, is the time-mean output)
+        series = [(p, "$(period_label(p)), variance-weighted", PERIOD_COL[p], false)
+                  for p in ("2025-2035", "2036-2050", "2025-2050") if p in Sg.period[Sg.output .== out]]
+        mean_p = unique(Sg.period[Sg.output .== "mean_$out"])
+        isempty(mean_p) || push!(series, (only(mean_p), "mean $(lowercase(output_label(out))) $(period_label(only(mean_p)))",
+            MEAN_COL, true))
+        pick(D, s) = s[4] ? D[D.output .== "mean_$out", :] : D[(D.output .== out) .& (D.period .== s[1]), :]
+        whole = Sg[(Sg.output .== out) .& (Sg.period .== "2025-2050"), :]
+        groups = sort(whole, :share; rev=true).player
+        inputs = let pk = combine(groupby(Si, :player), :share => maximum => :pk)
+            first(sort(pk, :pk; rev=true), 20).player
+        end
+        ns = length(series)
+        fig = Figure(; size=(1250, 40 * max(length(groups), 20) * 0.8 + 180))
+        for (k, (players, D, ttl)) in enumerate(((groups, Sg, "Groups ('process')"), (inputs, Si, "Top 20 inputs")))
+            np_ = length(players)
+            ax = Axis(fig[1, k]; yticks=(1:np_, players), yreversed=true, xlabel="Share of Var(Y)", title=ttl,
+                ygridvisible=false)
+            vlines!(ax, [0.0]; color=AXIS)
+            for (j, s) in enumerate(series)
+                T = pick(D, s)
+                T = T[indexin(players, T.player), :]
+                y = (1:np_) .+ (j - (ns + 1) / 2) * (0.8 / ns)
+                errorbars!(ax, T.share, y, T.share .- T.slb, T.sub .- T.share; direction=:x, color=s[3], whiskerwidth=3)
+                scatter!(ax, T.share, y; color=s[3], markersize=8, strokecolor=SURF, strokewidth=1.2)
+            end
+        end
+        Legend(fig[2, :], [MarkerElement(; marker=:circle, color=s[3], markersize=10) for s in series], [s[2] for s in series];
+            orientation=:horizontal, tellwidth=false)
+        bsfx = length(BANDS) > 1 ? "_band$(round(Int, 100b))" : ""
+        Label(fig[0, :], title_(dom, "$(output_label(out)), Shapley shares over periods" *
+            (length(BANDS) > 1 ? ", $(bandlab(b))" : "")); halign=:left, fontsize=14)
+        save_("periods_$(out)$(bsfx)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): variance-weighted Shapley " *
+            "shares per period (sum of the effects over the period's years / sum of Var(Y); years with more variance " *
+            "weigh more), with 95 % intervals" * (isempty(mean_p) ? "" : ", and the Shapley shares of the output's " *
+            "mean over $(period_label(only(mean_p))) as an output of its own (its variance includes the covariances " *
+            "between years)") * ". Groups ordered by the 2025–2050 share; inputs: the 20 largest in any series.")
     end
 end
 

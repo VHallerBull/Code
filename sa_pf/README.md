@@ -53,8 +53,8 @@ analysed walk is left out of that output, and of all thermal outputs together
 | `03_run_chunk.jl <model> (<proc> <n_procs> \| --bases=<a>:<b>) <band:domain[:zero]>...` | `Code/sa/shapley` | one process's walks (a stride locally, a base-sample range on the HPC) -> `chunks/`, state summaries (`:zero`: the zero-DHW design -> `pf_zero_dhw/chunks/`) |
 | `03b_run_zero.jl <model> <proc> <n_procs> <band:domain>...` | `Code/sa/shapley` | zero-DHW reference: each walk's A and B sets without heat stress (2 runs per base sample) -> `zero_chunks/` |
 | `04_collect.jl <model> <band>...` | `Code/sa/shapley` | `pf_results.jld2` (+ `pf_zero.jld2`) per band and domain: the state summaries and the outputs derived from them |
-| `05_analyse.jl <model> <band>...` | `Code/sa/shapley` | `analysis/`: effects, group effects, noise, base samples needed, convergence figures, `PILOT.md` |
-| `06_figures.jl <model> [year...]` | `Code/sa/shapley` | `analysis/final_figures/`: output trajectories (with the zero-DHW reference), per-input and per-group figures |
+| `05_analyse.jl <model> <band>...` | `Code/sa/shapley` | `analysis/`: effects, group effects, noise, base samples needed, period aggregates (variance-weighted shares 2025–2035 / 2036–2050 / 2025–2050 and the mean relative cover as an output), convergence figures, `PILOT.md` |
+| `06_figures.jl <model> [year...]` | `Code/sa/shapley` | `analysis/final_figures/`: output trajectories (with the zero-DHW reference), per-input and per-group figures, `periods_<output>` (shares per period) |
 | `run_pilot.sh [n_base] [n_procs] [sets]` | | 02 -> 03 (parallel processes; sets `main zero` by default) -> 04 for bands 0.1, 0.2, 0.5 |
 | `sa_outputs.jl` | (any) | output definitions, state-summary storage and derivation (no package dependencies) |
 | `adapters/<model>.jl` | | the model's state summary |
