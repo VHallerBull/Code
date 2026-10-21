@@ -3,7 +3,8 @@
 
     julia +release --project=Code/sa/shapley Code/sa_pf/04_collect.jl <model> <band> [band ...]
 
-Writes <band>/<domain>/pf_results.jld2:
+Writes, for each design set (`main`; `zero`, the design without heat stress, under pf_zero_dhw/),
+<band>/<domain>[/pf_zero_dhw]/pf_results.jld2:
     `state`  the runs' state summaries (sa_outputs.jl): Dict key => [n_base, d + 1, dims...]
     `Y`      the outputs derived from them: Dict output => [n_base, d + 1, years] (sa_outputs.jl)
     `dhw`    domain-mean DHW, [n_base, d + 1, years]
@@ -23,12 +24,12 @@ include(joinpath(@__DIR__, "pf_common.jl"))
 
 chunk_files(dir) = isdir(dir) ? filter(f -> endswith(f, ".jld2"), readdir(dir; join=true)) : String[]
 
-for band in BANDS, domain in SA_DOMAINS
-    dir = pf_run_dir(MODEL, band, domain)
+for band in BANDS, domain in SA_DOMAINS, set in PF_SETS
+    dir = pf_set_dir(MODEL, band, domain, set)
     files = chunk_files(joinpath(dir, "chunks"))
-    isempty(files) && (println("$(band_label(band))/$domain: no chunks"); continue)
+    isempty(files) && (set == "main" && println("$(band_label(band))/$domain: no chunks"); continue)
     parts = [JLD2.load(f) for f in files]
-    design = JLD2.load(joinpath(pf_band_dir(MODEL, band), "design_pf.jld2"))
+    design = JLD2.load(pf_design_path(MODEL, band, set))
     N, d = design["n_base"], ncol(design["A"])
     years = parts[1]["years"]
     T = length(years)
@@ -47,8 +48,8 @@ for band in BANDS, domain in SA_DOMAINS
     Y = derive_stored(state; thermal_groups)
     JLD2.jldsave(joinpath(dir, "pf_results.jld2"); state, Y, dhw, base=collect(1:N), failed, missing=missing_,
         years, seconds, n_runs, thermal_groups, settings=Dict("model" => MODEL, "band" => band, "domain" => domain,
-            "n_base" => N, "d" => d, "names" => design["names"], "n_shared" => design["n_shared"]))
-    println("$(band_label(band))/$domain: $(N - length(missing_)) of $N walks, $(length(failed)) failed, ",
+            "set" => set, "n_base" => N, "d" => d, "names" => design["names"], "n_shared" => design["n_shared"]))
+    println("$(band_label(band))$(set_suffix(set))/$domain: $(N - length(missing_)) of $N walks, $(length(failed)) failed, ",
         "$n_runs runs, $(round(seconds / 3600; digits=2)) CPU-h ($(round(seconds / n_runs; digits=3)) s/run); ",
         "outputs: ", join(output_order(keys(Y); thermal_groups), ", "))
 

@@ -34,6 +34,17 @@ band_label(band::Real) = "band$(lpad(round(Int, 100 * band), 2, '0'))"
 pf_band_dir(model, band) = mkpath(joinpath(SA_RUNS_ROOT, MODEL_FOLDERS[model], PF_SUBDIR, band_label(band)))
 pf_run_dir(model, band, domain) = mkpath(joinpath(pf_band_dir(model, band), domain))
 
+"""
+Design sets: `"main"` (the DHW block as inputs, every run with its own trajectory) and `"zero"` (the
+sensitivity analysis without heat stress: no DHW inputs, every run on the domain's all-zero member).
+"""
+const PF_SETS = ("main", "zero")
+set_suffix(set) = set == "main" ? "" : "_$set"
+pf_design_path(model, band, set="main") = joinpath(pf_band_dir(model, band), "design_pf$(set_suffix(set)).jld2")
+"Run folder of a set: the domain folder for `main`, its `pf_zero_dhw/` subfolder for `zero`."
+pf_set_dir(model, band, domain, set="main") =
+    set == "main" ? pf_run_dir(model, band, domain) : mkpath(joinpath(pf_run_dir(model, band, domain), "pf_zero_dhw"))
+
 "Slot of the domain's DHW array that every run overwrites with its own trajectory (in memory only)."
 const PF_DHW_SLOT = 2
 
@@ -103,29 +114,43 @@ function pf_permutations(n_base::Integer, n_shared::Integer, d::Integer;
 end
 
 """
-    pf_design(band, n_base) -> NamedTuple
+    pf_design(band, n_base; set="main") -> NamedTuple
 
 `A`, `B` (`[n_base, d]`, varying inputs only), `perms` (`[n_base, d]`), `constants` (fixed factors and
-their values), `spec`, `n_shared`, `names`.
+their values), `spec`, `n_shared`, `names`, `set`.
+
+`set = "zero"`: the design without heat stress. The DHW inputs (7 parameters + weather) are dropped and
+every run uses the all-zero DHW member; the other inputs keep exactly the main design's A and B values
+(so the walks' end points are the main design's parameter sets without DHW), and new walk orders are
+drawn for the remaining d = 13 + model inputs (the 13 shared ones in the same order for every model).
 """
-function pf_design(band::Real, n_base::Integer)
+function pf_design(band::Real, n_base::Integer; set::AbstractString="main")
+    set in PF_SETS || error("unknown set '$set' ($(join(PF_SETS, ", ")))")
     ss, ms = shared_spec(band), model_spec_band(band)
     A = hcat(sample_varying(ss, n_base, PF_SEEDS.shared_A), sample_varying(ms, n_base, PF_SEEDS.model_A))
     B = hcat(sample_varying(ss, n_base, PF_SEEDS.shared_B), sample_varying(ms, n_base, PF_SEEDS.model_B))
     spec = vcat(ss, ms)
     n_shared = count(.!ss.is_constant)
+    if set == "zero"
+        dhw = filter(startswith("dhw_"), names(A))
+        select!(A, Not(dhw))
+        select!(B, Not(dhw))
+        spec = spec[.!startswith.(String.(spec.fieldname), "dhw_"), :]
+        n_shared -= length(dhw)
+    end
     d = ncol(A)
     constants = Dict(String(r.fieldname) => r.val for r in eachrow(spec) if r.is_constant)
     perms = pf_permutations(n_base, n_shared, d)
-    return (; A, B, perms, constants, spec=spec_for_disk(spec), n_shared, names=names(A), band, n_base)
+    return (; A, B, perms, constants, spec=spec_for_disk(spec), n_shared, names=names(A), band, n_base, set)
 end
 
 """
     walk_rows(design, n) -> DataFrame (d + 1 rows)
 
 The runs of base sample `n`: row 0 = A[n], then each input in the order `perms[n, :]` swapped to its
-B[n] value (SAShE's `_build_pick_freeze_block` layout), plus the constants and `dhw_scenario` =
-`PF_DHW_SLOT`.
+B[n] value (SAShE's `_build_pick_freeze_block` layout), plus the constants and `dhw_scenario`:
+`PF_DHW_SLOT` (the run's own trajectory goes there) when the design has the DHW inputs, else 1 (the
+all-zero member: the `zero` set).
 """
 function walk_rows(design, n::Integer)::DataFrame
     A, B, p = design.A, design.B, design.perms
@@ -138,7 +163,7 @@ function walk_rows(design, n::Integer)::DataFrame
     for (k, v) in design.constants
         rows[!, k] .= v
     end
-    rows.dhw_scenario .= Float64(PF_DHW_SLOT)
+    rows.dhw_scenario .= "dhw_weather" in names(A) ? Float64(PF_DHW_SLOT) : 1.0
     return rows
 end
 
@@ -152,9 +177,14 @@ end
 Write the row's own DHW trajectory into `dom`'s slot `PF_DHW_SLOT` (in memory; `run_row` copies the
 domain before applying the multipliers), run the model, and return its state summary (sa_outputs.jl,
 built by the model's adapter from the in-memory output: nothing else of the run is kept) plus the
-domain-mean DHW per year.
+domain-mean DHW per year. A row without `dhw_weather` (the `zero` set, `dhw_scenario` = 1) runs on the
+all-zero member and returns DHW = 0.
 """
 function pf_run(dom, row, draws)
+    if !(:dhw_weather in propertynames(row))                     # zero set: the all-zero member
+        r = run_row(dom, row)
+        return (; state=state_summary(r), dhw=zeros(length(r.domain_series)))
+    end
     traj = generate_dhw(row, Int(row[:dhw_weather]), draws)
     dom.dhw_scens.data[:, :, PF_DHW_SLOT] .= traj
     return (; state=state_summary(run_row(dom, row)), dhw=vec(mean(traj; dims=2)))

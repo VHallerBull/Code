@@ -49,13 +49,13 @@ analysed walk is left out of that output, and of all thermal outputs together
 | Script | Env | Does |
 |---|---|---|
 | `01_dhw_draws.jl` | `Code/sa` | `pf_inputs/<domain>/dhw_draws.jld2` + exact-reproduction check |
-| `02_design.jl <model> <n_base> <band>...` | `Code/sa/shapley` | `<Model>/model_run_pf_pilot/band<NN>/design_pf.jld2` (A, B, permutations) |
-| `03_run_chunk.jl <model> <proc> <n_procs> <band:domain>...` | `Code/sa/shapley` | one process's walks -> `chunks/` (state summaries) |
+| `02_design.jl <model> <n_base> <band>... [--sets=main,zero]` | `Code/sa/shapley` | `<Model>/model_run_pf_pilot/band<NN>/design_pf.jld2` and `design_pf_zero.jld2` (A, B, permutations) |
+| `03_run_chunk.jl <model> <proc> <n_procs> <band:domain[:zero]>...` | `Code/sa/shapley` | one process's walks -> `chunks/`, state summaries (`:zero`: the zero-DHW design -> `pf_zero_dhw/chunks/`) |
 | `03b_run_zero.jl <model> <proc> <n_procs> <band:domain>...` | `Code/sa/shapley` | zero-DHW reference: each walk's A and B sets without heat stress (2 runs per base sample) -> `zero_chunks/` |
 | `04_collect.jl <model> <band>...` | `Code/sa/shapley` | `pf_results.jld2` (+ `pf_zero.jld2`) per band and domain: the state summaries and the outputs derived from them |
 | `05_analyse.jl <model> <band>...` | `Code/sa/shapley` | `analysis/`: effects, group effects, noise, base samples needed, convergence figures, `PILOT.md` |
 | `06_figures.jl <model> [year...]` | `Code/sa/shapley` | `analysis/final_figures/`: output trajectories (with the zero-DHW reference), per-input and per-group figures |
-| `run_pilot.sh [n_base] [n_procs]` | | 02 -> 03 -> 03b (parallel processes) -> 04 for bands 0.1, 0.2, 0.5 |
+| `run_pilot.sh [n_base] [n_procs] [sets]` | | 02 -> 03 (parallel processes; sets `main zero` by default) -> 04 for bands 0.1, 0.2, 0.5 |
 | `sa_outputs.jl` | (any) | output definitions, state-summary storage and derivation (no package dependencies) |
 | `adapters/<model>.jl` | | the model's state summary |
 | `test/runtests.jl` | `Code/sa/shapley` | walks = SAShE's table, permutations, A/B independence, toy model, output derivations, CoralPop adapter on real runs |
@@ -66,7 +66,15 @@ ranges stay at SamplingSetup.docx Table 2.
 **Base samples needed:** N = (1.96 σ / (δ Var(Y)))², where σ is an input's increment SD and δ the target
 95 % half-width as a share of Var(Y). Runs = N × (d + 1).
 
-**Zero-DHW reference:** the A and B parameter sets of every walk rerun on the all-zero DHW member (as Code/sa's
-control). They are drawn under the DHW trajectories in `outputs_time_<domain>.png` and are **not** part of the
-Shapley analysis, whose DHW inputs never reach zero. A sensitivity analysis under no heat stress would need its
-own design without the DHW inputs (155 + 13 inputs, 169 runs per base sample).
+**Zero-DHW design (set `zero`):** the sensitivity analysis without heat stress, the counterpart of the CoralBlox
+paper's "DHW = 0" column. `02_design.jl` writes it next to the main design (`design_pf_zero.jld2`): the DHW
+inputs are dropped (d = 13 + 155 = 168 for CoralPop, 169 runs per base sample), every run uses the domain's
+all-zero DHW member, and the other inputs keep exactly the main design's A and B values. Its walks' end points
+are therefore the main design's parameter sets without heat stress, i.e. the zero-DHW reference. Run it with
+`band:domain:zero` jobs in `03_run_chunk.jl` (results under `<band>/<domain>/pf_zero_dhw/`); 04-06 handle both
+sets (`set` column in the tables, `_zero` figure names).
+
+**Zero-DHW reference:** the A and B parameter sets of every walk without heat stress, drawn behind the outputs in
+`outputs_time_<domain>.png`; not part of the main Shapley analysis, whose DHW inputs never reach zero. It comes
+from `03b_run_zero.jl` (2 runs per base sample) or, when the zero design was run, from its walks' end points
+(then 03b is not needed).

@@ -10,8 +10,9 @@ writes analysis/final_figures/*.png and FIGURES.md. `year`s are the snapshot yea
 (default 2030 and 2050). Shares are effect / Var(Y) of the year; whiskers are 95 % intervals. In the
 heatmaps, cells whose interval includes 0 are blank: not resolved at this number of base samples.
 
-Per domain:
-  outputs_time                   the outputs themselves: median, 50 % and 95 % of runs per year, per band
+Per domain, and for each design set (`main`; `zero` = no heat stress, file names ending in _zero):
+  outputs_time                   the outputs themselves: median, 50 % and 95 % of runs per year, per band, with
+                                 the zero-DHW reference behind them (main set only)
   inputs_top30_<output>_<year>   top 30 inputs, one column per input band (like pawn_top30)
   inputs_outputs_<year>          top 25 inputs x outputs, one panel per band (like pawn_heatmap)
   inputs_time_<output>           top 30 inputs x years, one panel per band
@@ -58,6 +59,14 @@ bandlab(b) = "±$(round(Int, 100b)) %"
 E = CSV.read(joinpath(ANALYSIS, "effects.csv"), DataFrame)
 Gr = CSV.read(joinpath(ANALYSIS, "group_effects.csv"), DataFrame)
 for D in (E, Gr)
+    "set" in names(D) || (D.set = fill("main", nrow(D)))          # tables written before the zero set existed
+    D.set = String.(D.set)
+end
+"Design sets present: `main` (with the DHW inputs) and, if run, `zero` (no heat stress)."
+const SETS = [s for s in ("main", "zero") if s in E.set]
+"File-name suffix and title addition of the set being drawn (set in the loop below)."
+const SFX, STT = Ref(""), Ref("")
+for D in (E, Gr)
     D.slb = D.lb ./ D.var_y
     D.sub = D.ub ./ D.var_y
     D.resolved = D.slb .> 0                                 # 95 % interval above 0
@@ -71,8 +80,8 @@ noise = CSV.read(joinpath(ANALYSIS, "noise.csv"), DataFrame)
 for g in groupby(noise, :band); NBASE[g.band[1]] = g.n_base[1]; end
 
 figs = Tuple{String,String}[]
-save_(name, fig, cap) = (save(joinpath(OUT, name), fig; px_per_unit=2); push!(figs, (name, cap)))
-title_(dom, txt) = "$LABEL / $dom: $txt"
+save_(name, fig, cap) = (save(joinpath(OUT, name), fig; px_per_unit=2); push!(figs, (name, STT[] == "" ? cap : "Zero DHW (no heat stress, no DHW inputs): " * cap)))
+title_(dom, txt) = "$LABEL / $dom$(STT[]): $txt"
 
 "Top-k rows of `D` (one row per player) by the largest share in any panel, ranked."
 function top_players(D, k; col=:share)
@@ -105,7 +114,12 @@ function output_fans(dom)
     for b in BANDS
         dir = joinpath(RUNS_ROOT, FOLDER, "model_run_pf_pilot", "band$(lpad(round(Int, 100b), 2, '0'))", dom)
         isfile(joinpath(dir, "pf_results.jld2")) && (R[b] = JLD2.load(joinpath(dir, "pf_results.jld2")))
-        isfile(joinpath(dir, "pf_zero.jld2")) && (Z[b] = JLD2.load(joinpath(dir, "pf_zero.jld2")))
+        if isfile(joinpath(dir, "pf_zero.jld2"))                    # 03b_run_zero.jl: A and B sets, no DHW
+            Z[b] = JLD2.load(joinpath(dir, "pf_zero.jld2"))
+        elseif isfile(joinpath(dir, "pf_zero_dhw", "pf_results.jld2"))  # zero design: its walks' end points
+            zr = JLD2.load(joinpath(dir, "pf_zero_dhw", "pf_results.jld2"))
+            Z[b] = Dict("Y" => Dict(k => v[:, [1, size(v, 2)], :] for (k, v) in zr["Y"]))
+        end
     end
     isempty(R) && return
     Ys = first(values(R))["Y"]
@@ -148,9 +162,12 @@ function output_fans(dom)
         "the sensitivity analysis).")
 end
 
-for dom in DOMAINS
-    output_fans(dom)
-    Ed, Gd = E[E.domain .== dom, :], Gr[Gr.domain .== dom, :]
+for dom in DOMAINS, set in SETS
+    SFX[], STT[] = set == "main" ? ("", "") : ("_$set", " (zero DHW)")
+    set == "main" && output_fans(dom)
+    Ed = E[(E.domain .== dom) .& (E.set .== set), :]
+    Gd = Gr[(Gr.domain .== dom) .& (Gr.set .== set), :]
+    nrow(Ed) == 0 && continue
     OUTS = [o for o in OUTPUTS if o in Ed.output]          # this domain's outputs
 
     ## 1. top 30 inputs, one column per band (bars + 95 % whiskers, coloured by block)
@@ -174,7 +191,7 @@ for dom in DOMAINS
             ["DHW", "domain", "model"])
         Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, top 30 inputs (N = $(NBASE[BANDS[1]]) base samples)");
             halign=:left, fontsize=14)
-        save_("inputs_top30_$(out)_$(yr)_$dom.png", fig, "$dom, $(output_label(out)) in $yr: Shapley share of " *
+        save_("inputs_top30_$(out)_$(yr)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)) in $yr: Shapley share of " *
             "Var(Y) of the 30 inputs largest in any band, with 95 % intervals; one column per input band, same order.")
     end
 
@@ -197,7 +214,7 @@ for dom in DOMAINS
         end
         Colorbar(fig[1, length(BANDS) + 1], hm; label="Share of Var(Y) (blank: interval includes 0)")
         Label(fig[0, :], title_(dom, "top 25 inputs per output, $yr"); halign=:left, fontsize=14)
-        save_("inputs_outputs_$(yr)_$dom.png", fig, "$dom, $yr: share of Var(Y) of the 25 inputs largest on any " *
+        save_("inputs_outputs_$(yr)_$dom$(SFX[]).png", fig, "$dom, $yr: share of Var(Y) of the 25 inputs largest on any " *
             "output and band; blank cells are not resolved (95 % interval includes 0).")
     end
 
@@ -224,7 +241,7 @@ for dom in DOMAINS
         end
         Colorbar(fig[1, length(BANDS) + 1], hm; label="Share of Var(Y) (blank: interval includes 0)")
         Label(fig[0, :], title_(dom, "$(output_label(out)), top 30 inputs over time"); halign=:left, fontsize=14)
-        save_("inputs_time_$(out)_$dom.png", fig, "$dom, $(output_label(out)): share of Var(Y) per year of the 30 " *
+        save_("inputs_time_$(out)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): share of Var(Y) per year of the 30 " *
             "inputs largest in any year and band (ranked and scaled on 2026-2050; 2025, the initial state, saturates); blank = not resolved.")
     end
 
@@ -257,7 +274,7 @@ for dom in DOMAINS
             LineElement(; color=INK, linestyle=:dash)], [groups; "Other ($(length(unique(S.player)) - length(groups)))";
             "sum of all effects"])
         Label(fig[0, :], title_(dom, "$(output_label(out)), group shares over time ('process' groups)"); halign=:left, fontsize=14)
-        save_("groups_time_$(out)_$dom.png", fig, "$dom, $(output_label(out)): share of Var(Y) per group (sum of its " *
+        save_("groups_time_$(out)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): share of Var(Y) per group (sum of its " *
             "members' effects), stacked per year; dashed = sum of all effects (≈ 1 if converged). Small negative " *
             "estimates are drawn as 0.")
     end
@@ -285,7 +302,7 @@ for dom in DOMAINS
         Legend(fig[1, length(OUTS) + 1], [MarkerElement(; marker=:circle, color=c, markersize=10) for c in BAND_COL[1:length(BANDS)]],
             bandlab.(BANDS); title="Input band", titlefont=:regular)
         Label(fig[0, :], title_(dom, "group shares in $yr by input band ('process' groups)"); halign=:left, fontsize=14)
-        save_("groups_bands_$(yr)_$dom.png", fig, "$dom, $yr: share of Var(Y) per group with 95 % interval, for each " *
+        save_("groups_bands_$(yr)_$dom$(SFX[]).png", fig, "$dom, $yr: share of Var(Y) per group with 95 % interval, for each " *
             "input band; groups ordered by their largest share on $(output_label(OUTS[1])).")
     end
 
@@ -310,7 +327,7 @@ for dom in DOMAINS
         end
         Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, leading members of each group, $(bandlab(b)) " *
             "(group share in brackets)"); halign=:left, fontsize=14)
-        save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom.png", fig, "$dom, $(output_label(out)) in $yr, " *
+        save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)) in $yr, " *
             "$(bandlab(b)): the 6 largest members of each group (share of Var(Y), 95 % intervals; each panel on its own " *
             "scale, to show the ranking within the group); the group's total share in brackets. Shares from the main design: interactions with inputs outside the group are split.")
     end
