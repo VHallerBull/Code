@@ -111,6 +111,34 @@ const PERIOD_COL = Dict("2025-2035" => BAND_COL[1], "2036-2050" => BAND_COL[3], 
 const MEAN_COL = CATS[2]
 period_label(p) = replace(p, "-" => "–")
 
+"""
+Within-group figure: the 6 largest members of each group with more than one member, one panel per
+group on its own scale, the group's total share in brackets. `S`: one row per input (`player`, `group`,
+`share`, `slb`, `sub`) of one output, band and year or period.
+"""
+function within_groups_fig(S, ttl, fname, what)
+    gs = combine(groupby(S, :group), :share => sum => :tot, nrow => :n)
+    gs = sort(gs[gs.n .> 1, :], :tot; rev=true)
+    nc = 4
+    nr = cld(nrow(gs), nc)
+    fig = Figure(; size=(300 * nc, 230 * nr + 60))
+    for (k, g) in enumerate(gs.group)
+        T = first(sort(S[S.group .== g, :], :share; rev=true), 6)
+        ax = Axis(fig[fld(k - 1, nc) + 1, mod(k - 1, nc) + 1]; yticks=(1:nrow(T), T.player), yreversed=true,
+            title="$g ($(round(gs.tot[k]; digits=2) + 0.0))", titlesize=12, yticklabelsize=10,   # + 0.0: no "-0.0"
+            xticks=WilkinsonTicks(3; k_min=2), xticklabelsize=10,
+            limits=((min(0, minimum(T.slb)), max(1e-6, maximum(T.sub)) * 1.08), (0.4, 6.6)), ygridvisible=false)
+        barplot!(ax, 1:nrow(T), T.share; direction=:x, color=BLOCK_COL[block(T.player[1])], gap=0.3)
+        errorbars!(ax, T.share, 1:nrow(T), T.share .- T.slb, T.sub .- T.share; direction=:x, color=INK2, whiskerwidth=4)
+        vlines!(ax, [0.0]; color=AXIS)
+    end
+    dom = S.domain[1]
+    Label(fig[0, :], title_(dom, "$ttl (group share in brackets)"); halign=:left, fontsize=14)
+    save_(fname, fig, "$dom, $what: the 6 largest members of each group (share of Var(Y), 95 % intervals; each " *
+        "panel on its own scale, to show the ranking within the group); the group's total share in brackets. Shares " *
+        "from the main design: interactions with inputs outside the group are split.")
+end
+
 "Zero-DHW reference colour (categorical slot 6, as the green control band of Code/sa/07_analyse.jl)."
 const ZERO_COL = CATS[6]
 
@@ -325,30 +353,25 @@ for dom in DOMAINS, set in SETS
             "input band; groups ordered by their largest share on $(output_label(OUTS[1])).")
     end
 
-    ## 6. within groups: the leading members of each group (one figure per band)
-    for out in OUTS[1:1], yr in SNAP_YEARS[end:end], (j, b) in enumerate(BANDS)
-        S = Ed[(Ed.output .== out) .& (Ed.year .== yr) .& (Ed.band .== b), :]
-        gs = combine(groupby(S, :group), :share => sum => :tot, nrow => :n)
-        gs = sort(gs[gs.n .> 1, :], :tot; rev=true)
-        nc = 4
-        nr = cld(nrow(gs), nc)
-        fig = Figure(; size=(300 * nc, 230 * nr + 60))
-        for (k, g) in enumerate(gs.group)
-            T = sort(S[S.group .== g, :], :share; rev=true)
-            T = first(T, 6)
-            ax = Axis(fig[fld(k - 1, nc) + 1, mod(k - 1, nc) + 1]; yticks=(1:nrow(T), T.player), yreversed=true,
-                title="$g ($(round(gs.tot[k]; digits=2)))", titlesize=12, yticklabelsize=10,
-                xticks=WilkinsonTicks(3; k_min=2), xticklabelsize=10,
-                limits=((min(0, minimum(T.slb)), max(1e-6, maximum(T.sub)) * 1.08), (0.4, 6.6)), ygridvisible=false)
-            barplot!(ax, 1:nrow(T), T.share; direction=:x, color=BLOCK_COL[block(T.player[1])], gap=0.3)
-            errorbars!(ax, T.share, 1:nrow(T), T.share .- T.slb, T.sub .- T.share; direction=:x, color=INK2, whiskerwidth=4)
-            vlines!(ax, [0.0]; color=AXIS)
+    ## 6. within groups: the leading members of each group (one figure per band), in the last snapshot year
+    ## and, from the period aggregates, per period (variance-weighted shares)
+    for out in OUTS[1:1], (j, b) in enumerate(BANDS)
+        bt = "band$(round(Int, 100b))"
+        for yr in SNAP_YEARS[end:end]
+            S = Ed[(Ed.output .== out) .& (Ed.year .== yr) .& (Ed.band .== b), :]
+            within_groups_fig(S, "$(output_label(out)) in $yr, leading members of each group, $(bandlab(b))",
+                "within_groups_$(out)_$(yr)_$(bt)_$dom$(SFX[]).png", "$(output_label(out)) in $yr, $(bandlab(b))")
         end
-        Label(fig[0, :], title_(dom, "$(output_label(out)) in $yr, leading members of each group, $(bandlab(b)) " *
-            "(group share in brackets)"); halign=:left, fontsize=14)
-        save_("within_groups_$(out)_$(yr)_band$(round(Int, 100b))_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)) in $yr, " *
-            "$(bandlab(b)): the 6 largest members of each group (share of Var(Y), 95 % intervals; each panel on its own " *
-            "scale, to show the ranking within the group); the group's total share in brackets. Shares from the main design: interactions with inputs outside the group are split.")
+        HAS_PERIODS || continue
+        Pd = P[(P.domain .== dom) .& (P.set .== set) .& (P.band .== b) .& (P.output .== out) .& (P.kind .== "variance-weighted"), :]
+        for p in ("2025-2035", "2036-2050", "2025-2050")
+            S = Pd[Pd.period .== p, :]
+            nrow(S) == 0 && continue
+            within_groups_fig(S, "$(output_label(out)) $(period_label(p)) (variance-weighted), leading members of each " *
+                "group, $(bandlab(b))", "within_groups_$(out)_$(p)_$(bt)_$dom$(SFX[]).png",
+                "$(output_label(out)) over $(period_label(p)) (variance-weighted: sum of the effects over the period's " *
+                "years / sum of Var(Y)), $(bandlab(b))")
+        end
     end
 
     ## 7. period aggregates: groups and top inputs, one series per period (+ the time-mean output), per band
