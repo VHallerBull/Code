@@ -49,8 +49,8 @@ analysed walk is left out of that output, and of all thermal outputs together
 | Script | Env | Does |
 |---|---|---|
 | `01_dhw_draws.jl` | `Code/sa` | `pf_inputs/<domain>/dhw_draws.jld2` + exact-reproduction check |
-| `02_design.jl <model> <n_base> <band>... [--sets=main,zero]` | `Code/sa/shapley` | `<Model>/model_run_pf_pilot/band<NN>/design_pf.jld2` and `design_pf_zero.jld2` (A, B, permutations) |
-| `03_run_chunk.jl <model> <proc> <n_procs> <band:domain[:zero]>...` | `Code/sa/shapley` | one process's walks -> `chunks/`, state summaries (`:zero`: the zero-DHW design -> `pf_zero_dhw/chunks/`) |
+| `02_design.jl <model> <n_base> <band>... [--sets=main,zero]` | `Code/sa/shapley` | `<Model>/<run folder>/band<NN>/design_pf.{jld2,toml}` and `design_pf_zero.{jld2,toml}` (A, B, permutations; sizes) |
+| `03_run_chunk.jl <model> (<proc> <n_procs> \| --bases=<a>:<b>) <band:domain[:zero]>...` | `Code/sa/shapley` | one process's walks (a stride locally, a base-sample range on the HPC) -> `chunks/`, state summaries (`:zero`: the zero-DHW design -> `pf_zero_dhw/chunks/`) |
 | `03b_run_zero.jl <model> <proc> <n_procs> <band:domain>...` | `Code/sa/shapley` | zero-DHW reference: each walk's A and B sets without heat stress (2 runs per base sample) -> `zero_chunks/` |
 | `04_collect.jl <model> <band>...` | `Code/sa/shapley` | `pf_results.jld2` (+ `pf_zero.jld2`) per band and domain: the state summaries and the outputs derived from them |
 | `05_analyse.jl <model> <band>...` | `Code/sa/shapley` | `analysis/`: effects, group effects, noise, base samples needed, convergence figures, `PILOT.md` |
@@ -58,7 +58,13 @@ analysed walk is left out of that output, and of all thermal outputs together
 | `run_pilot.sh [n_base] [n_procs] [sets]` | | 02 -> 03 (parallel processes; sets `main zero` by default) -> 04 for bands 0.1, 0.2, 0.5 |
 | `sa_outputs.jl` | (any) | output definitions, state-summary storage and derivation (no package dependencies) |
 | `adapters/<model>.jl` | | the model's state summary |
-| `test/runtests.jl` | `Code/sa/shapley` | walks = SAShE's table, permutations, A/B independence, toy model, output derivations, CoralPop adapter on real runs |
+| `test/runtests.jl` | `Code/sa/shapley` | walks = SAShE's table, permutations, extension (prefix-stable designs), A/B independence, toy model, output derivations, CoralPop adapter on real runs |
+| `hpc/` | | HPC image staging (`stage_pf.sh`), Slurm jobs (`pf_submit.sh`, `pf_chunk.slurm`, `pf_collect.slurm`) and `RUNNING_PF_ON_HPC.md` |
+
+**Run folder:** `<Model>/model_run_pf_pilot/` by default (the local pilot); `CMR_PF_SUBDIR=model_run_pf` for
+the full runs (HPC and their analysis). `CMR_PF_INPUTS_DIR` moves `pf_inputs/` (the HPC jobs set both).
+**Designs are prefix-stable:** a design with more base samples starts with the same walks, so a finished run can
+be extended by running only the new base samples (`hpc/RUNNING_PF_ON_HPC.md`).
 
 **Bands:** ±band applies to the 13 domain multipliers and the model's native factors. The DHW generator
 ranges stay at SamplingSetup.docx Table 2.

@@ -11,7 +11,7 @@ target half-width delta (as a share of Var(Y)) needs
 
     N = (1.96 sigma / (delta Var(Y)))^2   base samples,   runs = N (d + 1).
 
-Writes <ModelFolder>/model_run_pf_pilot/analysis/: effects.csv, group_effects.csv, noise.csv,
+Writes <ModelFolder>/<CMR_PF_SUBDIR, default model_run_pf_pilot>/analysis/: effects.csv, group_effects.csv, noise.csv,
 required_base_samples.csv, dropped_years.csv (years left out of an output for missing values; all with a
 `set` column), figures/*.png (the zero set's with suffix `_zero`)
 and PILOT.md.
@@ -23,7 +23,7 @@ const BANDS = parse.(Float64, ARGS[2:end])
 include(joinpath(@__DIR__, "pf_common.jl"))
 include(joinpath(@__DIR__, "..", "sa", "shapley", "groups.jl"))
 include(joinpath(@__DIR__, "..", "sa", "shapley", "plots.jl"))   # theme, colours (read only)
-using CSV
+using CSV, SAShE
 
 const OUT = mkpath(joinpath(SA_RUNS_ROOT, MODEL_FOLDERS[MODEL], PF_SUBDIR, "analysis"))
 const FIG = mkpath(joinpath(OUT, "figures"))

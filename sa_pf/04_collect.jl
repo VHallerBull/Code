@@ -31,6 +31,11 @@ for band in BANDS, domain in SA_DOMAINS, set in PF_SETS
     parts = [JLD2.load(f) for f in files]
     design = JLD2.load(pf_design_path(MODEL, band, set))
     N, d = design["n_base"], ncol(design["A"])
+    ## chunks from two splits of the same design (e.g. stride and range files) would count walks twice
+    allb = vcat([p["base"] for p in parts]...)
+    length(allb) == length(unique(allb)) || error("$dir/chunks: base samples in more than one chunk file " *
+        "(remove the chunks of the other split): $(first(sort(unique(filter(b -> count(==(b), allb) > 1, allb))), 10))")
+    maximum(allb) <= N || error("$dir/chunks: base samples beyond the design's $N (chunks of a larger design?)")
     years = parts[1]["years"]
     T = length(years)
     thermal_groups = parts[1]["thermal_groups"]

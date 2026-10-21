@@ -12,23 +12,28 @@ Inputs (d = 176 for CoralPop): 7 DHW parameters (fixed ranges, SamplingSetup.doc
 model-independent sample, and their relative order in each walk is the same for every model, so every
 model sees exactly the same DHW trajectories and domain settings in each base sample.
 
-Run with the Code/sa/shapley environment (ADRIA, CoralPopInterface, SAShE).
+Run with the Code/sa/shapley environment locally, or the model's image on the HPC (no SAShE needed to
+run: only 05_analyse.jl and the tests load it).
+
+Folders (environment variables, for the HPC jobs): `CMR_PF_SUBDIR` the run folder inside the model folder
+(default `model_run_pf_pilot`; never `model_run`), `CMR_PF_INPUTS_DIR` the DHW draws (default
+`<CMR>/pf_inputs`), plus sa_common.jl's `CMR_SA_DOMAINS_DIR` and `CMR_SA_RUNS_DIR`.
 =#
 
-ENV["CMR_SA_RUN_SUBDIR"] = get(ENV, "CMR_SA_RUN_SUBDIR", "model_run_pf_pilot")  # never model_run
+"Output folder inside each model folder (`CMR_PF_SUBDIR`; never Code/sa's model_run / model_run_local)."
+const PF_SUBDIR = get(ENV, "CMR_PF_SUBDIR", "model_run_pf_pilot")
+PF_SUBDIR in ("model_run", "model_run_local") && error("CMR_PF_SUBDIR = $PF_SUBDIR is Code/sa's folder")
+ENV["CMR_SA_RUN_SUBDIR"] = get(ENV, "CMR_SA_RUN_SUBDIR", PF_SUBDIR)
 include(joinpath(@__DIR__, "..", "sa", "sa_common.jl"))
 include(joinpath(@__DIR__, "..", "sa", "models", "$MODEL.jl"))
 include(joinpath(@__DIR__, "dhw_generator.jl"))
 include(joinpath(@__DIR__, "sa_outputs.jl"))
 include(joinpath(@__DIR__, "adapters", "$MODEL.jl"))       # state_summary, PF_CLASS_OF_GROUP, PF_THERMAL_GROUPS
-using SAShE
 using Random: Xoshiro, randperm
 import JLD2
 
-"Folder of the shared pick-and-freeze inputs (DHW draws), one per domain."
-const PF_INPUTS = joinpath(CMR_DIR, "pf_inputs")
-"Output folder of the pilot runs (never Code/sa's model_run / model_run_local)."
-const PF_SUBDIR = "model_run_pf_pilot"
+"Folder of the shared pick-and-freeze inputs (DHW draws), one per domain (`CMR_PF_INPUTS_DIR`)."
+const PF_INPUTS = normpath(get(ENV, "CMR_PF_INPUTS_DIR", joinpath(CMR_DIR, "pf_inputs")))
 
 band_label(band::Real) = "band$(lpad(round(Int, 100 * band), 2, '0'))"
 pf_band_dir(model, band) = mkpath(joinpath(SA_RUNS_ROOT, MODEL_FOLDERS[model], PF_SUBDIR, band_label(band)))
@@ -80,10 +85,13 @@ function), from `Xoshiro(seed)`. Not ADRIA's Sobol' sampler: two of its samples 
 are strongly correlated row by row (A[n] vs B[n] up to |r| = 0.98, checked on 2048 rows), which breaks
 pick-and-freeze, whose A[n] and B[n] must be independent. Goda (2021) and SAShE's documented workflow use
 Monte Carlo too.
+
+Drawn row by row, so the first n rows are the same for any larger n: a design can be extended to more
+base samples later and the walks already run stay valid (as `pf_permutations`).
 """
 function sample_varying(spec::DataFrame, n::Integer, seed::Integer)::DataFrame
     v = spec[.!spec.is_constant, :]
-    U = rand(Xoshiro(seed), n, nrow(v))
+    U = permutedims(rand(Xoshiro(seed), nrow(v), n))
     cols = map(enumerate(eachrow(v))) do (j, r)
         dist = r.dist == DiscreteUniform ? DiscreteUniform(Int.(r.dist_params)...) : r.dist(r.dist_params...)
         r.fieldname => Float64.(quantile.(dist, U[:, j]))
@@ -97,7 +105,8 @@ end
 One uniform random order of the `d` inputs per base sample, in which the relative order of the first
 `n_shared` (the shared block) depends only on `n_base` and `n_shared`: drawn from its own stream, then
 written into the positions a uniform permutation of all `d` gives them. The result is still a uniform
-permutation, and every model walks the shared inputs in the same order.
+permutation, and every model walks the shared inputs in the same order. Row n does not depend on
+`n_base`, so a larger design starts with the same walks.
 """
 function pf_permutations(n_base::Integer, n_shared::Integer, d::Integer;
     seed_shared=PF_SEEDS.order_shared, seed_model=PF_SEEDS.order_model)::Matrix{Int}

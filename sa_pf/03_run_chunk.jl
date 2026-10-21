@@ -11,30 +11,52 @@ Each job writes <band>/<domain>/chunks/proc_<pp>_of_<nn>.jld2 (skipped if it exi
 n_base_here]), `dhw` (domain-mean DHW, [d + 1, years, n_base_here]), `failed` (base samples with a failed
 run), `seconds`, `n_runs`, `years`, `thermal_groups`. No other run output is kept.
 CoralPop runs through Python, so parallelism is one process per share (no threads).
+
+    julia ... 03_run_chunk.jl <model> --bases=<first>:<last> <band:domain[:zero]> [...]
+
+The HPC form (one Slurm array task): a contiguous range of base samples, written to
+chunks/walks_<first>-<last>.jld2 (5-digit, zero-padded), `last` capped at the design's n_base. Ranges
+never depend on the number of tasks, so a design extended to more base samples (02_design.jl with a
+larger n_base gives the same first walks) only needs the new ranges run.
 =#
 
-length(ARGS) >= 4 || error("usage: 03_run_chunk.jl <model> <proc> <n_procs> <band:domain> ...")
 const MODEL = ARGS[1]
-const PROC, N_PROCS = parse(Int, ARGS[2]), parse(Int, ARGS[3])
+"Base samples of this process: `--bases=a:b` (a range, HPC), else `<proc> <n_procs>` (a stride, local)."
+const RANGE_MODE = length(ARGS) >= 2 && startswith(ARGS[2], "--bases=")
+const BASES_ARG, JOB_ARGS = RANGE_MODE ? (parse.(Int, split(ARGS[2][9:end], ":")), ARGS[3:end]) :
+                            (parse.(Int, ARGS[2:3]), ARGS[4:end])
+isempty(JOB_ARGS) && error("usage: 03_run_chunk.jl <model> (<proc> <n_procs> | --bases=<first>:<last>) <band:domain> ...")
 "Jobs `band:domain` (set main) or `band:domain:zero` (the zero-DHW design)."
 const JOBS = [(parse(Float64, p[1]), String(p[2]), length(p) > 2 ? String(p[3]) : "main")
-              for p in (split(j, ":") for j in ARGS[4:end])]
+              for p in (split(j, ":") for j in JOB_ARGS)]
 include(joinpath(@__DIR__, "pf_common.jl"))
+
+"This process's base samples of a design with `n_base` walks, and its chunk file name."
+function my_bases(n_base)
+    if RANGE_MODE
+        a, b = BASES_ARG[1], min(BASES_ARG[2], n_base)
+        a <= b || error("--bases=$(join(BASES_ARG, ":")): the design has only $n_base base samples")
+        return collect(a:b), "walks_$(lpad(a, 5, '0'))-$(lpad(b, 5, '0')).jld2"
+    end
+    p, np = BASES_ARG
+    return collect(p:np:n_base), "proc_$(lpad(p, 2, '0'))_of_$(lpad(np, 2, '0')).jld2"
+end
+const PROC = RANGE_MODE ? "$(BASES_ARG[1])-$(BASES_ARG[2])" : string(BASES_ARG[1])
 
 const DOMS = Dict{String,Any}()
 const DRAWS = Dict{String,Any}()
 
 for (band, domain, set) in JOBS
-    out_dir = mkpath(joinpath(pf_set_dir(MODEL, band, domain, set), "chunks"))
-    out = joinpath(out_dir, "proc_$(lpad(PROC, 2, '0'))_of_$(lpad(N_PROCS, 2, '0')).jld2")
-    isfile(out) && (println("$(band_label(band))$(set_suffix(set))/$domain: $out exists, skipped"); continue)
     design = JLD2.load(pf_design_path(MODEL, band, set))
     design = (; (Symbol(k) => v for (k, v) in design)...)
+    bases, fname = my_bases(design.n_base)
+    out_dir = mkpath(joinpath(pf_set_dir(MODEL, band, domain, set), "chunks"))
+    out = joinpath(out_dir, fname)
+    isfile(out) && (println("$(band_label(band))$(set_suffix(set))/$domain: $out exists, skipped"); continue)
     dom = get!(() -> load_sa_domain(domain), DOMS, domain)
     draws = get!(() -> load_dhw_draws(joinpath(PF_INPUTS, domain, "dhw_draws.jld2")), DRAWS, domain)
     years = collect(ADRIA.timesteps(dom))
     T, d = length(years), ncol(design.A)
-    bases = collect(PROC:N_PROCS:design.n_base)
     S = nothing                      # state summaries: key => [d + 1, dims..., walks], allocated at the first run
     dhw = fill(NaN, d + 1, T, length(bases))
     failed = Int[]

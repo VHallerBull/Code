@@ -4,7 +4,7 @@ counterparts of Code/sa/07_analyse.jl's PAWN figures, plus time and input-band c
 
     julia +release --project=Code/sa/shapley Code/sa_pf/06_figures.jl <model> [year ...]
 
-Reads <ModelFolder>/model_run_pf_pilot/analysis/effects.csv and group_effects.csv (05_analyse.jl), and the
+Reads <ModelFolder>/<CMR_PF_SUBDIR, default model_run_pf_pilot>/analysis/effects.csv and group_effects.csv (05_analyse.jl), and the
 runs' outputs in <band>/<domain>/pf_results.jld2 (04_collect.jl), and
 writes analysis/final_figures/*.png and FIGURES.md. `year`s are the snapshot years of the bar charts
 (default 2030 and 2050). Shares are effect / Var(Y) of the year; whiskers are 95 % intervals. In the
@@ -31,7 +31,9 @@ const CMR = normpath(joinpath(@__DIR__, "..", ".."))
 const FOLDER = Dict("coralpop" => "CoralPOP")[MODEL]
 "Root of the model folders (as sa_common.jl's SA_RUNS_ROOT: `CMR_SA_RUNS_DIR` overrides it)."
 const RUNS_ROOT = normpath(get(ENV, "CMR_SA_RUNS_DIR", CMR))
-const ANALYSIS = joinpath(RUNS_ROOT, FOLDER, "model_run_pf_pilot", "analysis")
+"Run folder inside the model folder (as pf_common.jl's PF_SUBDIR: `CMR_PF_SUBDIR`)."
+const PF_SUBDIR = get(ENV, "CMR_PF_SUBDIR", "model_run_pf_pilot")
+const ANALYSIS = joinpath(RUNS_ROOT, FOLDER, PF_SUBDIR, "analysis")
 const OUT = mkpath(joinpath(ANALYSIS, "final_figures"))
 const LABEL = Dict("coralpop" => "CoralPop")[MODEL]
 
@@ -112,7 +114,7 @@ Only the A and B runs of each walk are used: 2N independent draws from the input
 function output_fans(dom)
     R, Z = Dict{Float64,Any}(), Dict{Float64,Any}()
     for b in BANDS
-        dir = joinpath(RUNS_ROOT, FOLDER, "model_run_pf_pilot", "band$(lpad(round(Int, 100b), 2, '0'))", dom)
+        dir = joinpath(RUNS_ROOT, FOLDER, PF_SUBDIR, "band$(lpad(round(Int, 100b), 2, '0'))", dom)
         isfile(joinpath(dir, "pf_results.jld2")) && (R[b] = JLD2.load(joinpath(dir, "pf_results.jld2")))
         if isfile(joinpath(dir, "pf_zero.jld2"))                    # 03b_run_zero.jl: A and B sets, no DHW
             Z[b] = JLD2.load(joinpath(dir, "pf_zero.jld2"))

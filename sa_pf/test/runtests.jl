@@ -4,7 +4,7 @@ Tests of the pick-and-freeze design (pf_common.jl).
     julia +release --project=Code/sa/shapley Code/sa_pf/test/runtests.jl
 =#
 
-using Test, Statistics
+using Test, Statistics, SAShE
 using LinearAlgebra: I
 const MODEL = "coralpop"
 include(joinpath(@__DIR__, "..", "pf_common.jl"))
@@ -50,6 +50,13 @@ include(joinpath(@__DIR__, "..", "pf_common.jl"))
         rel(P, n) = filter(<=(13), P[n, :])
         Q = pf_permutations(64, 13, 40)
         @test all(rel(Z.perms, n) == rel(Q, n) for n in 1:64)
+    end
+
+    @testset "a larger design starts with the same walks (extension)" begin
+        L = pf_design(0.5, 128)
+        @test L.A[1:64, :] == D.A && L.B[1:64, :] == D.B && L.perms[1:64, :] == D.perms
+        Lz = pf_design(0.5, 128; set="zero")
+        @test Lz.A[1:64, :] == pf_design(0.5, 64; set="zero").A && Lz.perms[1:64, :] == pf_design(0.5, 64; set="zero").perms
     end
 
     @testset "A and B independent, inputs independent" begin
