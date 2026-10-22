@@ -1,0 +1,28 @@
+# Bands of the 13 domain multipliers (Code/sa/sa_common.jl, MULTIPLIER_FACTORS).
+#
+# Each multiplier m ~ Uniform(lo, hi) scales the synthetic domain's own value (1.0 = unchanged), so
+# [0.5, 1.5] is +-50 %. lo == hi fixes that multiplier at the value (it is then not a design factor).
+# Limits applied by apply_domain_multipliers: k <= 1, total initial cover <= k, connectivity row sums <= 1.
+#
+# Read on Windows by 03_multiplier_sample.jl (preview) and 04_design.jl (design). The bands are saved
+# with the design (design.jld2 `spec`), and the runs and 06/07 take them from there -- so changing this
+# file never needs an image rebuild: edit, re-run 03 and 04, upload the new designs.
+# CMR_SA_MULTIPLIER_BANDS=<path> uses another file.
+
+# used for any multiplier not listed under [bands]
+default = [0.5, 1.5]
+
+[bands]
+m_depth          = [0.5, 1.5]   # median depth
+m_cover_total    = [0.5, 1.5]   # total initial coral cover (relative to k)
+m_cover_fg1      = [0.5, 1.5]   # initial-cover weight of tabular Acropora
+m_cover_fg2      = [0.5, 1.5]   # initial-cover weight of corymbose Acropora
+m_cover_fg3      = [0.5, 1.5]   # initial-cover weight of corymbose non-Acropora
+m_cover_fg4      = [0.5, 1.5]   # initial-cover weight of small massives
+m_cover_fg5      = [0.5, 1.5]   # initial-cover weight of large massives
+m_ub             = [0.5, 1.5]   # wave exposure (orbital velocity Ub)
+m_k              = [0.5, 1.5]   # carrying capacity k (habitable fraction)
+m_area           = [0.5, 1.5]   # site area
+m_self_recruit   = [0.5, 1.5]   # connectivity diagonal (self-recruitment)
+m_conn_strength  = [0.5, 1.5]   # connectivity off-diagonal (between-reef exchange)
+m_retention      = [0.5, 1.5]   # total larvae retained in the system (mean connectivity row sum)

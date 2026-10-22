@@ -1,0 +1,26 @@
+[deps]
+ADRIA = "7dc409a7-fbe5-4c9d-b3e2-b0c19a6ba600"
+ADRIAIndicators = "05ad51df-066f-4748-8c47-f6b67db83211"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CScape = "a9cf4493-63b1-4baa-9378-c4395a88e333"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CscapeInterface = "a1b2c3d4-1234-5678-9abc-def012345678"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SAShE = "83401093-d8e7-49c8-a98d-2b177fad4d3a"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+ADRIA = {path = "../../../../../../Documents/GitHub/ADRIA.jl/ADRIA"}
+ADRIAIndicators = {path = "../../../../../../Documents/GitHub/ADRIAIndicators.jl"}
+CScape = {path = "../../../../../../Documents/GitHub/CScape.jl"}
+CscapeInterface = {path = "../../../../../../Documents/GitHub/CscapeInterface.jl"}
+SAShE = {path = "../../../../../../Documents/GitHub/SAShE.jl"}
+
+[compat]
+julia = "1.12"

@@ -116,6 +116,13 @@ function engine_config()
         ## true: CoralPop and Kora take all larvae from the domain's connectivity matrix (a site's own
         ## through the diagonal), as CoralBlox and C~scape do, instead of their own retention/self-seeding.
         larvae_via_connectivity=_cfg("LARVAE_VIA_CONNECTIVITY", "false") == "true",
+        ## CoralPop's factor spec: "scales" = coralpop_spec (12 multiplicative +-10% scales + seed, the
+        ## multi-engine comparison); "native" = coralpop_native_spec (every non-location-specific CoralPop
+        ## parameter on its own, +-CORALPOP_BAND around the engine default: 155 factors with
+        ## LARVAE_VIA_CONNECTIVITY=true, 172 without -- the spec follows the larval mode).
+        coralpop_spec=(v = _cfg("CORALPOP_SPEC", "scales"); v in ("scales", "native") ? v :
+                       error("CMR_CORALPOP_SPEC must be \"scales\" or \"native\", got \"$v\".")),
+        coralpop_band=parse(Float64, _cfg("CORALPOP_BAND", "0.5")),
         ## CoCoNet: distance offshore of every reef in km (its growth slows near the coast), or "coastline" for
         ## CoCoNet's own distance from the domain's coordinates; its ocean-acidification growth penalty (no
         ## other engine has one); its crown-of-thorns starfish + fish (ReefMod's CoTS are off too).
@@ -136,6 +143,7 @@ function settings_dict(cfg, years)::Dict{String,Any}
         "CORSET_USE_DHW_AS_BLEACHING" => cfg.corset_use_dhw,
         "CORSET_USE_CYCLONES_AS_HURRICANES" => cfg.corset_use_cyclones,
         "LARVAE_VIA_CONNECTIVITY" => cfg.larvae_via_connectivity,
+        "CORALPOP_SPEC" => cfg.coralpop_spec, "CORALPOP_BAND" => cfg.coralpop_band,
         "CORALPOP_MORPH_GROUPS" => string(CORALPOP_MORPH_ADRIA_GROUPS),
         "COCONET_KM_OFFSHORE" => something(cfg.coconet_km_offshore, "coastline"),
         "COCONET_OCEAN_ACIDIFICATION" => cfg.coconet_ocean_acidification, "COCONET_COTS" => cfg.coconet_cots,
@@ -307,7 +315,10 @@ function make_spec(key::Symbol, dom_fixed, cfg, years, cscape_dir)::DataFrame
     key === :coralblox && return coralblox_spec(dom_fixed)
     key === :cscape && return cscape_spec(setup_cscape_project(cscape_dir, cfg, years), CSCAPE_BASE_SCENARIO_ID;
         mortality_bounds=(-0.1, 0.1), growth_bounds=(0.9, 1.1), recruitment_bounds=(0.9, 1.1))
-    key === :coralpop && return coralpop_spec(; rcp, year_start=ys, year_end=ye)
+    key === :coralpop && return cfg.coralpop_spec == "native" ?
+        coralpop_native_spec(; band=cfg.coralpop_band, larvae_via_connectivity=cfg.larvae_via_connectivity,
+            rcp, year_start=ys, year_end=ye) :
+        coralpop_spec(; rcp, year_start=ys, year_end=ye)
     key === :kora && return kora_spec(; rcp, year_start=ys, year_end=ye)
     key === :corset && return corset_spec(; rcp, year_start=ys, year_end=ye)
     key === :reefmod && return reefmod_spec(; rcp, year_start=ys, year_end=ye)

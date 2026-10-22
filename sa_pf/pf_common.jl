@@ -1,0 +1,227 @@
+#=
+pf_common.jl -- the pick-and-freeze (Goda 2021; SAShE `CallablePickAndFreezeSample`) design, option B:
+the DHW block is the 7 generator parameters plus a weather index, and every run generates its own
+trajectory. Separate from Code/sa: it only includes (reads) sa_common.jl and models/<model>.jl.
+
+    MODEL = "coralpop"
+    include(joinpath(@__DIR__, "pf_common.jl"))
+
+Inputs (d = 176 for CoralPop, 83 for C~scape): 7 DHW parameters (fixed ranges, SamplingSetup.docx Table 2) +
+`dhw_weather` (1..1024) + 13 domain multipliers U(1 - band, 1 + band) + the model's native factors at
++-band. The first 21 (DHW + domain) are shared by every model: their A and B values come from one
+model-independent sample, and their relative order in each walk is the same for every model, so every
+model sees exactly the same DHW trajectories and domain settings in each base sample.
+
+Run with the Code/sa/shapley environment locally, or the model's image on the HPC (no SAShE needed to
+run: only 05_analyse.jl and the tests load it).
+
+Folders (environment variables, for the HPC jobs): `CMR_PF_SUBDIR` the run folder inside the model folder
+(default `model_run_pf_pilot`; never `model_run`), `CMR_PF_INPUTS_DIR` the DHW draws (default
+`<CMR>/pf_inputs`), plus sa_common.jl's `CMR_SA_DOMAINS_DIR` and `CMR_SA_RUNS_DIR`.
+=#
+
+"Output folder inside each model folder (`CMR_PF_SUBDIR`; never Code/sa's model_run / model_run_local)."
+const PF_SUBDIR = get(ENV, "CMR_PF_SUBDIR", "model_run_pf_pilot")
+PF_SUBDIR in ("model_run", "model_run_local") && error("CMR_PF_SUBDIR = $PF_SUBDIR is Code/sa's folder")
+ENV["CMR_SA_RUN_SUBDIR"] = get(ENV, "CMR_SA_RUN_SUBDIR", PF_SUBDIR)
+include(joinpath(@__DIR__, "..", "sa", "sa_common.jl"))
+include(joinpath(@__DIR__, "..", "sa", "models", "$MODEL.jl"))
+include(joinpath(@__DIR__, "dhw_generator.jl"))
+include(joinpath(@__DIR__, "sa_outputs.jl"))
+include(joinpath(@__DIR__, "adapters", "$MODEL.jl"))       # state_summary, PF_CLASS_OF_GROUP, PF_THERMAL_GROUPS
+using Random: Xoshiro, randperm
+import JLD2
+
+"Folder of the shared pick-and-freeze inputs (DHW draws), one per domain (`CMR_PF_INPUTS_DIR`)."
+const PF_INPUTS = normpath(get(ENV, "CMR_PF_INPUTS_DIR", joinpath(CMR_DIR, "pf_inputs")))
+
+band_label(band::Real) = "band$(lpad(round(Int, 100 * band), 2, '0'))"
+pf_band_dir(model, band) = mkpath(joinpath(SA_RUNS_ROOT, MODEL_FOLDERS[model], PF_SUBDIR, band_label(band)))
+pf_run_dir(model, band, domain) = mkpath(joinpath(pf_band_dir(model, band), domain))
+
+"""
+Design sets: `"main"` (the DHW block as inputs, every run with its own trajectory) and `"zero"` (the
+sensitivity analysis without heat stress: no DHW inputs, every run on the domain's all-zero member).
+"""
+const PF_SETS = ("main", "zero")
+set_suffix(set) = set == "main" ? "" : "_$set"
+pf_design_path(model, band, set="main") = joinpath(pf_band_dir(model, band), "design_pf$(set_suffix(set)).jld2")
+"Run folder of a set: the domain folder for `main`, its `pf_zero_dhw/` subfolder for `zero`."
+pf_set_dir(model, band, domain, set="main") =
+    set == "main" ? pf_run_dir(model, band, domain) : mkpath(joinpath(pf_run_dir(model, band, domain), "pf_zero_dhw"))
+
+"Slot of the domain's DHW array that every run overwrites with its own trajectory (in memory only)."
+const PF_DHW_SLOT = 2
+
+## ---------------------------------------------------------------------------------------------------
+## Specs
+## ---------------------------------------------------------------------------------------------------
+
+"The weather index: which column of fixed random draws (= weather of ensemble member w + 1)."
+weather_spec()::DataFrame = _spec([(:dhw_weather, 512.0, DiscreteUniform, (1.0, Float64(N_DHW_MEMBERS)), false)])
+
+"Shared block: 7 DHW parameters (fixed ranges), the weather index, 13 multipliers at +-band."
+shared_spec(band::Real)::DataFrame = vcat(dhw_spec(), weather_spec(), multiplier_spec((1 - band, 1 + band)))
+
+"""
+The model's native factors at +-band: CoralPop the same call as models/coralpop.jl, other band; C~scape
+`cscape_native_spec` (models/cscape.jl): the posterior draws over all draws at every band, the
+bleaching slope at most ±20 % (CScape/CScape_sampled_parameters.md).
+"""
+function model_spec_band(band::Real)::DataFrame
+    MODEL == "coralpop" && return coralpop_native_spec(; band=Float64(band),
+        larvae_via_connectivity=LARVAE_VIA_CONNECTIVITY, rcp=parse(Int, SA_RCP),
+        year_start=SA_YEARS[1], year_end=SA_YEARS[2])
+    MODEL == "cscape" && return cscape_native_spec(; band=Float64(band))
+    error("model_spec_band: add $MODEL")
+end
+
+## ---------------------------------------------------------------------------------------------------
+## Design
+## ---------------------------------------------------------------------------------------------------
+
+"Seeds (Monte Carlo streams): the shared block's are model independent (same A/B DHW and domain values for every model)."
+const PF_SEEDS = (; shared_A=101, shared_B=102, model_A=201, model_B=202, order_shared=301, order_model=401)
+
+"""
+    sample_varying(spec, n, seed) -> DataFrame
+
+Plain Monte Carlo draws of the varying factors of `spec` (each through its distribution's quantile
+function), from `Xoshiro(seed)`. Not ADRIA's Sobol' sampler: two of its samples with different seeds
+are strongly correlated row by row (A[n] vs B[n] up to |r| = 0.98, checked on 2048 rows), which breaks
+pick-and-freeze, whose A[n] and B[n] must be independent. Goda (2021) and SAShE's documented workflow use
+Monte Carlo too.
+
+Drawn row by row, so the first n rows are the same for any larger n: a design can be extended to more
+base samples later and the walks already run stay valid (as `pf_permutations`).
+"""
+function sample_varying(spec::DataFrame, n::Integer, seed::Integer)::DataFrame
+    v = spec[.!spec.is_constant, :]
+    U = permutedims(rand(Xoshiro(seed), nrow(v), n))
+    cols = map(enumerate(eachrow(v))) do (j, r)
+        dist = r.dist == DiscreteUniform ? DiscreteUniform(Int.(r.dist_params)...) : r.dist(r.dist_params...)
+        r.fieldname => Float64.(quantile.(dist, U[:, j]))
+    end
+    return DataFrame(cols)
+end
+
+"""
+    pf_permutations(n_base, n_shared, d) -> Matrix{Int} [n_base, d]
+
+One uniform random order of the `d` inputs per base sample, in which the relative order of the first
+`n_shared` (the shared block) depends only on `n_base` and `n_shared`: drawn from its own stream, then
+written into the positions a uniform permutation of all `d` gives them. The result is still a uniform
+permutation, and every model walks the shared inputs in the same order. Row n does not depend on
+`n_base`, so a larger design starts with the same walks.
+"""
+function pf_permutations(n_base::Integer, n_shared::Integer, d::Integer;
+    seed_shared=PF_SEEDS.order_shared, seed_model=PF_SEEDS.order_model)::Matrix{Int}
+    rs, rm = Xoshiro(seed_shared), Xoshiro(seed_model)
+    P = zeros(Int, n_base, d)
+    for n in 1:n_base
+        shared_order = randperm(rs, n_shared)
+        p = randperm(rm, d)
+        pos = findall(<=(n_shared), p)
+        p[pos] = shared_order
+        P[n, :] = p
+    end
+    return P
+end
+
+"""
+    pf_design(band, n_base; set="main") -> NamedTuple
+
+`A`, `B` (`[n_base, d]`, varying inputs only), `perms` (`[n_base, d]`), `constants` (fixed factors and
+their values), `spec`, `n_shared`, `names`, `set`.
+
+`set = "zero"`: the design without heat stress. The DHW inputs (7 parameters + weather) are dropped and
+every run uses the all-zero DHW member; the other inputs keep exactly the main design's A and B values
+(so the walks' end points are the main design's parameter sets without DHW), and new walk orders are
+drawn for the remaining d = 13 + model inputs (the 13 shared ones in the same order for every model).
+"""
+function pf_design(band::Real, n_base::Integer; set::AbstractString="main")
+    set in PF_SETS || error("unknown set '$set' ($(join(PF_SETS, ", ")))")
+    ss, ms = shared_spec(band), model_spec_band(band)
+    A = hcat(sample_varying(ss, n_base, PF_SEEDS.shared_A), sample_varying(ms, n_base, PF_SEEDS.model_A))
+    B = hcat(sample_varying(ss, n_base, PF_SEEDS.shared_B), sample_varying(ms, n_base, PF_SEEDS.model_B))
+    spec = vcat(ss, ms)
+    n_shared = count(.!ss.is_constant)
+    if set == "zero"
+        dhw = filter(startswith("dhw_"), names(A))
+        select!(A, Not(dhw))
+        select!(B, Not(dhw))
+        spec = spec[.!startswith.(String.(spec.fieldname), "dhw_"), :]
+        n_shared -= length(dhw)
+    end
+    d = ncol(A)
+    constants = Dict(String(r.fieldname) => r.val for r in eachrow(spec) if r.is_constant)
+    perms = pf_permutations(n_base, n_shared, d)
+    return (; A, B, perms, constants, spec=spec_for_disk(spec), n_shared, names=names(A), band, n_base, set)
+end
+
+"""
+    walk_rows(design, n) -> DataFrame (d + 1 rows)
+
+The runs of base sample `n`: row 0 = A[n], then each input in the order `perms[n, :]` swapped to its
+B[n] value (SAShE's `_build_pick_freeze_block` layout), plus the constants and `dhw_scenario`:
+`PF_DHW_SLOT` (the run's own trajectory goes there) when the design has the DHW inputs, else 1 (the
+all-zero member: the `zero` set).
+"""
+function walk_rows(design, n::Integer)::DataFrame
+    A, B, p = design.A, design.B, design.perms
+    d = ncol(A)
+    rows = DataFrame([Symbol(c) => fill(Float64(A[n, c]), d + 1) for c in names(A)])
+    for k in 1:d
+        c = p[n, k]
+        rows[(k + 1):end, c] .= Float64(B[n, c])
+    end
+    for (k, v) in design.constants
+        rows[!, k] .= v
+    end
+    rows.dhw_scenario .= "dhw_weather" in names(A) ? Float64(PF_DHW_SLOT) : 1.0
+    return rows
+end
+
+## ---------------------------------------------------------------------------------------------------
+## One run
+## ---------------------------------------------------------------------------------------------------
+
+"""
+    pf_run(dom, row, draws) -> (; state::Dict, dhw::Vector)
+
+Write the row's own DHW trajectory into `dom`'s slot `PF_DHW_SLOT` (in memory; `run_row` copies the
+domain before applying the multipliers), run the model, and return its state summary (sa_outputs.jl,
+built by the model's adapter from the in-memory output: nothing else of the run is kept) plus the
+domain-mean DHW per year. A row without `dhw_weather` (the `zero` set, `dhw_scenario` = 1) runs on the
+all-zero member and returns DHW = 0.
+"""
+function pf_run(dom, row, draws)
+    if !(:dhw_weather in propertynames(row))                     # zero set: the all-zero member
+        r = run_row(dom, row)
+        return (; state=state_summary(r), dhw=zeros(length(r.domain_series)))
+    end
+    traj = generate_dhw(row, Int(row[:dhw_weather]), draws)
+    dom.dhw_scens.data[:, :, PF_DHW_SLOT] .= traj
+    return (; state=state_summary(run_row(dom, row)), dhw=vec(mean(traj; dims=2)))
+end
+
+## ---------------------------------------------------------------------------------------------------
+## Zero-DHW reference
+## ---------------------------------------------------------------------------------------------------
+
+"""
+    zero_rows(design, n) -> DataFrame (2 rows)
+
+The A[n] and B[n] parameter sets (start and end of walk n) with the DHW switched off: `dhw_scenario` = 1,
+the domain's all-zero member (as the zero-DHW control of Code/sa). A reference without heat stress for
+the output trajectories; not part of the Shapley analysis.
+"""
+function zero_rows(design, n::Integer)::DataFrame
+    W = walk_rows(design, n)
+    Z = W[[1, nrow(W)], :]
+    Z.dhw_scenario .= 1.0
+    return Z
+end
+
+"One zero-DHW run: `run_row` on the member-1 (all-zero) DHW, no trajectory generated; its state summary."
+pf_run_zero(dom, row) = (; state=state_summary(run_row(dom, row)))

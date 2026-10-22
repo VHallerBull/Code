@@ -1,0 +1,58 @@
+# Shapley analysis of CoralPop's domain relative cover in every year 2025-2050.
+#
+#   julia +release -t auto --project=Code/sa/shapley Code/sa/shapley/run_shapley.jl Code/sa/shapley/configs/coralpop_relative_cover.toml
+#
+# Any value can be overridden on the command line, e.g. --output.indicator=reef_condition_index
+# --domains='["SingleReef_SobolDHW"]' --estimator.n_permutations=256
+
+model      = "coralpop"
+run_subdir = "model_run_local"          # "model_run" once the full HPC results are in
+domains    = ["SingleReef_SobolDHW", "NineReefs_SobolDHW"]
+groups     = "groups/coralpop.toml"     # relative to Code/sa/shapley
+sets       = ["main", "control"]        # run sets: main = result_set.jld2; control = control_result_set.jld2
+                                        #   (the zero-DHW runs), written to <output tag>__control/
+
+# The zero-DHW control runs. Their DHW columns hold the parameters of the design's member, which these
+# runs did not use (they ran on the all-zero member), so those inputs are left out.
+[control]
+drop_inputs = ["^dhw_"]                 # regexes on input names
+
+# The output of interest (see output_select.jl for every option)
+[output]
+source    = "result_set"                # result_set | series | indicator_outputs | dhw
+indicator = "relative_cover"            # any ADRIA indicator in result_set.jld2
+reef      = "domain"                    # "domain" or a reef id, e.g. "reef_03"
+years     = "all"                       # or e.g. [2030, 2040, 2050]
+transform = "none"                      # none | change_from_start | relative_to_start
+
+[estimator]
+n_permutations = 1024                   # SAShE's random permutations (accuracy knob)
+seed           = 1234
+n_rows         = 0                      # 0 = all runs; e.g. 2048 = that nested Sobol' prefix
+terminal       = "var_y"                # var_y: effects sum to Var(Y) (SAShE). estimate: they sum to the
+                                        #   estimated Var(E[Y|X]); the rest is reported as unexplained
+
+[analyses]
+ungrouped = true
+grouped   = ["block", "process"]        # schemes for the grouped sum and group-as-player analyses
+within    = ["process"]                 # restricted game per group: a scheme (all its groups) or "scheme:group"
+# n_permutations_players = 1024         # optional overrides of n_permutations per analysis
+# n_permutations_within  = 1024
+# n_permutations_chain   = 1024
+
+# Convergence over the runs: the ungrouped and grouped analyses repeated on nested Sobol' prefixes of the
+# runs (default N/8, N/4, N/2, N; at least 32) for a few years (default first, middle, last).
+[convergence]
+enabled = true
+# n_rows = [1024, 2048, 4096, 8192]
+# years  = [2030, 2040, 2050]
+
+# Follow-on analyses: inputs -> intermediate M -> output. `replaces` is the upstream group whose influence
+# should run through M; `lag` (years) uses M in year t - lag for the output in year t; `players` are the
+# stage-B players besides M: "groups" (the other groups of the same scheme) or "individual".
+[[chain]]
+name         = "dhw_to_cover"
+intermediate = { source = "dhw", stat = "cumulative", reef = "domain" }
+replaces     = "process:DHW"
+lag          = 0
+players      = "groups"

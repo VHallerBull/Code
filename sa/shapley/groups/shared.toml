@@ -1,0 +1,26 @@
+# Groups of the inputs every coral model shares: the DHW generator parameters and the domain multipliers
+# (SamplingSetup.docx 2.3-2.4). Model files (groups/<model>.toml) extend this with their own groups.
+
+[[scheme]]
+name = "block"
+  [[scheme.group]]
+  name = "DHW"
+  match = ["^dhw_"]
+  [[scheme.group]]
+  name = "Domain"
+  match = ["^m_"]
+
+[[scheme]]
+name = "process"
+  [[scheme.group]]
+  name = "DHW"
+  match = ["^dhw_"]
+  [[scheme.group]]
+  name = "Initial cover"
+  match = ["^m_cover_"]
+  [[scheme.group]]
+  name = "Reef setting"
+  match = ["^m_depth$", "^m_ub$", "^m_k$", "^m_area$"]
+  [[scheme.group]]
+  name = "Connectivity"
+  match = ["^m_self_recruit$", "^m_conn_strength$", "^m_retention$"]
