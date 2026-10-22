@@ -28,14 +28,17 @@ include(joinpath(@__DIR__, "sa_outputs.jl"))                # output names, orde
 const MODEL = get(ARGS, 1, "coralpop")
 const SNAP_YEARS = length(ARGS) > 1 ? parse.(Int, ARGS[2:end]) : [2030, 2050]
 const CMR = normpath(joinpath(@__DIR__, "..", ".."))
-const FOLDER = Dict("coralpop" => "CoralPOP")[MODEL]
+const FOLDER = Dict("coralpop" => "CoralPOP", "cscape" => "CScape")[MODEL]
 "Root of the model folders (as sa_common.jl's SA_RUNS_ROOT: `CMR_SA_RUNS_DIR` overrides it)."
 const RUNS_ROOT = normpath(get(ENV, "CMR_SA_RUNS_DIR", CMR))
 "Run folder inside the model folder (as pf_common.jl's PF_SUBDIR: `CMR_PF_SUBDIR`)."
 const PF_SUBDIR = get(ENV, "CMR_PF_SUBDIR", "model_run_pf_pilot")
 const ANALYSIS = joinpath(RUNS_ROOT, FOLDER, PF_SUBDIR, "analysis")
 const OUT = mkpath(joinpath(ANALYSIS, "final_figures"))
-const LABEL = Dict("coralpop" => "CoralPop")[MODEL]
+const LABEL = Dict("coralpop" => "CoralPop", "cscape" => "C~scape")[MODEL]
+"What the first year (2025) is: CoralPop's initial state; C~scape's first simulated year (its initial state is 2024)."
+const FIRST_YEAR_NOTE = Dict("coralpop" => "the initial state",
+    "cscape" => "after one simulated year from the initial state")[MODEL]
 
 ## ---- palette (dataviz reference instance, light mode) ----
 const CATS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
@@ -64,6 +67,16 @@ for D in (E, Gr)
     "set" in names(D) || (D.set = fill("main", nrow(D)))          # tables written before the zero set existed
     D.set = String.(D.set)
 end
+"The groups of effects.csv and of the period figures; group_effects.csv may hold more schemes (05_analyse.jl)."
+const SCHEME = "process"
+Gr.scheme = String.(Gr.scheme)
+"Every grouping scheme in group_effects.csv, `SCHEME` first: the group figures 4 and 5 are drawn for each."
+const SCHEMES = [SCHEME; sort(setdiff(unique(Gr.scheme), [SCHEME]))]
+"File-name part of a scheme's group figures (none for `SCHEME`, as before other schemes were drawn)."
+scheme_sfx(s) = s == SCHEME ? "" : "_$s"
+## an output whose Var(Y) is 0 in a year has no shares: nothing to draw (and NaN would break the colour ranges)
+filter!(r -> isfinite(r.share), E)
+filter!(r -> isfinite(r.share), Gr)
 "Design sets present: `main` (with the DHW inputs) and, if run, `zero` (no heat stress)."
 const SETS = [s for s in ("main", "zero") if s in E.set]
 "File-name suffix and title addition of the set being drawn (set in the loop below)."
@@ -98,6 +111,9 @@ Gr.player = Gr.group
 const HAS_PERIODS = isfile(joinpath(ANALYSIS, "period_effects.csv"))
 P, Pg = if HAS_PERIODS
     p, pg = (CSV.read(joinpath(ANALYSIS, f), DataFrame) for f in ("period_effects.csv", "period_group_effects.csv"))
+    pg = pg[String.(pg.scheme) .== SCHEME, :]                     # the period figures show the SCHEME groups
+    filter!(r -> isfinite(r.share), p)
+    filter!(r -> isfinite(r.share), pg)
     p.player, pg.player = p.input, pg.group
     for D in (p, pg)
         D.slb, D.sub = D.lb ./ D.var_y, D.ub ./ D.var_y
@@ -206,15 +222,15 @@ function output_fans(dom)
             haskey(R, b) || continue
             r = R[b]
             A = key == "dhw" ? r["dhw"] : r["Y"][key]                       # [N, d + 1, T]
-            ok = findall(n -> !any(isnan, @view A[n, :, :]), axes(A, 1))
-            S = vcat(A[ok, 1, :], A[ok, end, :])                            # A and B runs: [2N, T]
+            ## every walk's A and B runs, missing values left to fan! year by year: dropping whole walks would
+            ## keep, for a thermal group, only the runs in which it never went extinct (failed walks are all NaN)
+            S = vcat(A[:, 1, :], A[:, end, :])                              # A and B runs: [2N, T]
             yrs = r["years"]
             ax = Axis(fig[i, j]; ylabel=j == 1 ? lab : "", xlabel=i == length(rows) ? "Year" : "",
                 title=i == 1 ? bandlab(b) : "")
             if key != "dhw" && haskey(Z, b) && haskey(Z[b]["Y"], key)         # zero-DHW reference, behind
                 ZA = Z[b]["Y"][key]
-                zok = findall(n -> !any(isnan, @view ZA[n, :, :]), axes(ZA, 1))
-                fan!(ax, yrs, vcat(ZA[zok, 1, :], ZA[zok, 2, :]), ZERO_COL)
+                fan!(ax, yrs, vcat(ZA[:, 1, :], ZA[:, 2, :]), ZERO_COL)
             end
             fan!(ax, yrs, S, col)
             push!(axs, ax)
@@ -233,8 +249,8 @@ function output_fans(dom)
     Label(fig[0, :], title_(dom, "output trajectories by input band ($nb independent runs per band)"); halign=:left, fontsize=14)
     save_("outputs_time_$dom.png", fig, "$dom: every output and the domain-mean DHW per year: median, 50 % and 95 % " *
         "of runs, one column per input band (rows share a y-axis). From the A and B runs of the walks, " *
-        "$nb independent draws per band. Green: the same parameter sets with zero DHW (reference; not part of " *
-        "the sensitivity analysis).")
+        "$nb independent draws per band; a thermal tolerance over the runs in which that group still has cover " *
+        "in the year. Green: the same parameter sets with zero DHW (reference; not part of the sensitivity analysis).")
 end
 
 for dom in DOMAINS, set in SETS
@@ -288,7 +304,8 @@ for dom in DOMAINS, set in SETS
     ## 3. top 30 inputs x years, one panel per band
     for out in OUTS
         S = Ed[Ed.output .== out, :]
-        S26 = S[S.year .> minimum(S.year), :]                   # 2025 is the initial state: rank/scale without it
+        S26 = S[S.year .> minimum(S.year), :]                   # 2025 (FIRST_YEAR_NOTE): rank/scale without it
+        nrow(S26) == 0 && continue                              # only one year left (missing values)
         players = top_players(S26, 30)
         yrs = sort(unique(S.year))
         cmax = maximum(S26.share[in.(S26.player, Ref(players))])
@@ -309,12 +326,13 @@ for dom in DOMAINS, set in SETS
         Colorbar(fig[1, length(BANDS) + 1], hm; label="Share of Var(Y) (blank: interval includes 0)")
         Label(fig[0, :], title_(dom, "$(output_label(out)), top 30 inputs over time"); halign=:left, fontsize=14)
         save_("inputs_time_$(out)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): share of Var(Y) per year of the 30 " *
-            "inputs largest in any year and band (ranked and scaled on 2026-2050; 2025, the initial state, saturates); blank = not resolved.")
+            "inputs largest in any year and band (ranked and scaled on 2026-2050; 2025, $FIRST_YEAR_NOTE, saturates); blank = not resolved.")
     end
 
-    ## 4. group shares over time, stacked (top 7 groups + Other), one panel per band
-    for out in OUTS
-        S = Gd[Gd.output .== out, :]
+    ## 4. group shares over time, stacked (top 7 groups + Other), one panel per band; one figure per scheme
+    for scheme in SCHEMES, out in OUTS
+        S = Gd[(Gd.output .== out) .& (Gd.scheme .== scheme), :]
+        nrow(S) == 0 && continue
         groups = top_players(S, MAX_SERIES)
         colors = Dict(g => CATS[i] for (i, g) in enumerate(groups))
         fig = Figure(; size=(380 * length(BANDS) + 280, 420))
@@ -340,15 +358,16 @@ for dom in DOMAINS, set in SETS
         Legend(fig[1, length(BANDS) + 1], [[PolyElement(; color=colors[g]) for g in groups]; PolyElement(; color=OTHER);
             LineElement(; color=INK, linestyle=:dash)], [groups; "Other ($(length(unique(S.player)) - length(groups)))";
             "sum of all effects"])
-        Label(fig[0, :], title_(dom, "$(output_label(out)), group shares over time ('process' groups)"); halign=:left, fontsize=14)
-        save_("groups_time_$(out)_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): share of Var(Y) per group (sum of its " *
-            "members' effects), stacked per year; dashed = sum of all effects (≈ 1 if converged). Small negative " *
-            "estimates are drawn as 0.")
+        Label(fig[0, :], title_(dom, "$(output_label(out)), group shares over time ('$scheme' groups)"); halign=:left, fontsize=14)
+        save_("groups_time_$(out)$(scheme_sfx(scheme))_$dom$(SFX[]).png", fig, "$dom, $(output_label(out)): share of Var(Y) " *
+            "per '$scheme' group (sum of its members' effects), stacked per year; dashed = sum of all effects (≈ 1 if " *
+            "converged). Small negative estimates are drawn as 0.")
     end
 
-    ## 5. every group, all bands side by side, one panel per output (dots + 95 % whiskers)
-    for yr in SNAP_YEARS
-        S = Gd[Gd.year .== yr, :]
+    ## 5. every group, all bands side by side, one panel per output (dots + 95 % whiskers); one figure per scheme
+    for scheme in SCHEMES, yr in SNAP_YEARS
+        S = Gd[(Gd.year .== yr) .& (Gd.scheme .== scheme), :]
+        nrow(S[S.output .== OUTS[1], :]) == 0 && continue
         order = combine(groupby(S[S.output .== OUTS[1], :], :player), :share => maximum => :pk)
         groups = sort(order, :pk; rev=true).player
         ng = length(groups)
@@ -368,9 +387,9 @@ for dom in DOMAINS, set in SETS
         end
         Legend(fig[1, length(OUTS) + 1], [MarkerElement(; marker=:circle, color=c, markersize=10) for c in BAND_COL[1:length(BANDS)]],
             bandlab.(BANDS); title="Input band", titlefont=:regular)
-        Label(fig[0, :], title_(dom, "group shares in $yr by input band ('process' groups)"); halign=:left, fontsize=14)
-        save_("groups_bands_$(yr)_$dom$(SFX[]).png", fig, "$dom, $yr: share of Var(Y) per group with 95 % interval, for each " *
-            "input band; groups ordered by their largest share on $(output_label(OUTS[1])).")
+        Label(fig[0, :], title_(dom, "group shares in $yr by input band ('$scheme' groups)"); halign=:left, fontsize=14)
+        save_("groups_bands_$(yr)$(scheme_sfx(scheme))_$dom$(SFX[]).png", fig, "$dom, $yr: share of Var(Y) per '$scheme' " *
+            "group with 95 % interval, for each input band; groups ordered by their largest share on $(output_label(OUTS[1])).")
     end
 
     ## 6. within groups: the leading members of each group (one figure per band), in the last snapshot year

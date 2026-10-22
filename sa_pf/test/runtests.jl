@@ -105,12 +105,14 @@ include(joinpath(@__DIR__, "..", "pf_common.jl"))
         @test Y["acropora_share"] ≈ fill(0.2 / tot, 2) && Y["massive_share"] ≈ fill((0.25 * 0.1 + 0.75 * 0.3) / tot, 2)
         @test Y["coral_diversity"] ≈ fill(0.25 * 0.4 + 0.75 * 0.6, 2) && Y["relative_juveniles"] ≈ fill(0.05, 2)
         @test Y["thermal_a"] == [5.0, 7.0] && isequal(Y["thermal_b"], [6.0, NaN])      # no weight -> missing
+        @test Y["thermal_all"] == [5.5, 7.0]                                         # pooled over weighted groups
+        @test all(isnan, derive_outputs(merge(S, Dict("thermal_weight" => zeros(2, 2))); thermal_groups=["a", "b"])["thermal_all"])
         @test Y["spatial_cv"] ≈ fill(std([0.4, 0.6]) / 0.5, 2)
         @test !haskey(derive_outputs(Dict(k => (k == "weights" ? v[1:1] : v[:, ntuple(_ -> :, ndims(v) - 2)..., 1:1])
             for (k, v) in S if k in ("cover", "class_cover", "weights"))), "spatial_cv")   # one reef: no CV
         @test output_order(keys(Y); thermal_groups=["b", "a"]) ==
               ["relative_cover", "acropora_share", "massive_share", "relative_juveniles", "coral_diversity",
-               "thermal_b", "thermal_a", "spatial_cv"]
+               "thermal_all", "thermal_b", "thermal_a", "spatial_cv"]
         ## store -> chunk -> merge -> derive: the same outputs back
         store = state_store(S, 3, 2)
         store_state!(store, S, 2, 1)
@@ -121,12 +123,12 @@ include(joinpath(@__DIR__, "..", "pf_common.jl"))
         @test isapprox(Ys["relative_cover"][4, 2, :], Y["relative_cover"]; rtol=1e-6)   # stored as Float32
         @test all(isnan, Ys["relative_cover"][4, 1, :])
         @test all(isnan, Ys["relative_cover"][2, :, :])                               # base sample never stored
-        ## years with a missing value are left out; thermal years together
+        ## years with a missing value are left out, each output on its own
         Yv = Dict("relative_cover" => ones(2, 3, 2), "thermal_a" => ones(2, 3, 2), "thermal_b" => ones(2, 3, 2))
         Yv["thermal_b"][1, 2, 2] = NaN
         v = valid_years(Yv, collect(keys(Yv)), [1, 2])
-        @test v["relative_cover"] == [1, 2] && v["thermal_a"] == [1] && v["thermal_b"] == [1]
-        @test valid_years(Yv, collect(keys(Yv)), [2])["thermal_a"] == [1, 2]          # walk 1 not analysed
+        @test v["relative_cover"] == [1, 2] && v["thermal_a"] == [1, 2] && v["thermal_b"] == [1]
+        @test valid_years(Yv, collect(keys(Yv)), [2])["thermal_b"] == [1, 2]          # walk 1 not analysed
     end
 
     @testset "CoralPop state summary on real runs" begin

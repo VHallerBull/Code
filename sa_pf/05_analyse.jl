@@ -38,13 +38,17 @@ const FIG = mkpath(joinpath(OUT, "figures"))
 ## tolerance, juveniles) and domains (spatial_cv only with more than one reef).
 const DELTAS = [0.05, 0.02, 0.01]
 const TOP_K = 10
+"The grouping scheme of effects.csv's `group` column, the noise and base-sample criteria and the figures.
+group_effects.csv and period_group_effects.csv hold every scheme of the model's groups file (`scheme`)."
 const SCHEME = "process"
 "Periods of the variance-weighted shares (first year, last year; inclusive)."
 const PERIODS = [("2025-2035", 2025, 2035), ("2036-2050", 2036, 2050), ("2025-2050", 2025, 2050)]
 "Outputs whose mean over all years is analysed as an output of its own (`mean_<output>`)."
 const MEAN_OUTPUTS = ["relative_cover"]
-"CPU seconds per run on the AIMS HPC (the 8192-run given-data runs), for the cost table."
-const HPC_S_PER_RUN = Dict("SingleReef_SobolDHW" => 0.066, "NineReefs_SobolDHW" => 0.236)
+"CPU seconds per run on the AIMS HPC, per model and domain, for the cost table (NaN where not measured).
+CoralPop: the 8192-run given-data runs."
+const HPC_S_PER_RUN = Dict("coralpop" => Dict("SingleReef_SobolDHW" => 0.066, "NineReefs_SobolDHW" => 0.236))
+hpc_s_per_run(domain) = get(get(HPC_S_PER_RUN, MODEL, Dict{String,Float64}()), domain, NaN)
 "Readable set label for titles."
 set_title(set) = set == "main" ? "" : " (zero DHW)"
 "Readable band label for titles."
@@ -62,20 +66,23 @@ end
 
 """
 Rows of one aggregate (a period's sum, or a time-mean output): per-walk increments `F` [d, N] and the
-variance `V` they sum to. Effects are the walk means; 95 % intervals 1.96 SD / sqrt(N - 1), per input and
-per group (members summed walk by walk, as the yearly group effects).
+variance `V` they sum to. Effects are the walk means; 95 % intervals 1.96 SD / sqrt(N - 1), per input (its
+group in `GS[SCHEME]`) and per group of every scheme in `GS` (members summed walk by walk, as the yearly
+group effects).
 """
-function push_aggregate!(rows, grows, F, V; G, names_, kw...)
+function push_aggregate!(rows, grows, F, V; GS, names_, kw...)
     N = size(F, 2)
     row(e, s) = (; effect=e, lb=e - 1.96s / sqrt(N - 1), ub=e + 1.96s / sqrt(N - 1), var_y=V, share=e / V, sigma=s)
     eff, σ = vec(mean(F; dims=2)), vec(std(F; dims=2))
     for i in eachindex(eff)
-        push!(rows, (; kw..., input=names_[i], group=group_of(G, i), row(eff[i], σ[i])...))
+        push!(rows, (; kw..., input=names_[i], group=group_of(GS[SCHEME], i), row(eff[i], σ[i])...))
     end
-    Fg = reduce(vcat, [sum(F[m, :]; dims=1) for m in G.members])
-    effg, σg = vec(mean(Fg; dims=2)), vec(std(Fg; dims=2))
-    for (g, gname) in enumerate(G.names)
-        push!(grows, (; kw..., scheme=SCHEME, group=gname, n_members=length(G.members[g]), row(effg[g], σg[g])...))
+    for (scheme, G) in sort(collect(GS); by=first)
+        Fg = reduce(vcat, [sum(F[m, :]; dims=1) for m in G.members])
+        effg, σg = vec(mean(Fg; dims=2)), vec(std(Fg; dims=2))
+        for (g, gname) in enumerate(G.names)
+            push!(grows, (; kw..., scheme, group=gname, n_members=length(G.members[g]), row(effg[g], σg[g])...))
+        end
     end
 end
 
@@ -94,7 +101,8 @@ for set in PF_SETS, band in BANDS
     names_ = design["names"]
     d = length(names_)
     n_inputs[set] = d
-    G = load_groupings(joinpath(@__DIR__, "..", "sa", "shapley", "groups", "$MODEL.toml"), names_)[SCHEME]
+    GS = load_groupings(joinpath(@__DIR__, "..", "sa", "shapley", "groups", "$MODEL.toml"), names_)
+    G = GS[SCHEME]
     for domain in SA_DOMAINS
         path = joinpath(pf_set_dir(MODEL, band, domain, set), "pf_results.jld2")
         isfile(path) || (println("$(band_label(band))$(set_suffix(set))/$domain: no results"); continue)
@@ -138,11 +146,15 @@ for set in PF_SETS, band in BANDS
                         group=group_of(G, i), effect=eff[i], lb=lb[i], ub=ub[i], var_y=vy,
                         share=eff[i] / vy, sigma=σ[i]))
                 end
-                moe_g = 1.96 .* σg ./ sqrt(N - 1)                      # as SAShE's margin_of_error
-                for (g, gname) in enumerate(G.names)
-                    push!(group_rows, (; set, band, domain, output=out, year=yr, scheme=SCHEME, group=gname,
-                        n_members=length(G.members[g]), effect=effg[g], lb=effg[g] - moe_g[g],
-                        ub=effg[g] + moe_g[g], var_y=vy, share=effg[g] / vy, sigma=σg[g]))
+                for (scheme, Gs) in sort(collect(GS); by=first)        # every scheme of the groups file
+                    fgs = scheme == SCHEME ? fg : reduce(vcat, [sum(f[m, :]; dims=1) for m in Gs.members])
+                    σgs, effgs = vec(std(fgs; dims=2)), vec(mean(fgs; dims=2))
+                    moe_g = 1.96 .* σgs ./ sqrt(N - 1)                  # as SAShE's margin_of_error
+                    for (g, gname) in enumerate(Gs.names)
+                        push!(group_rows, (; set, band, domain, output=out, year=yr, scheme, group=gname,
+                            n_members=length(Gs.members[g]), effect=effgs[g], lb=effgs[g] - moe_g[g],
+                            ub=effgs[g] + moe_g[g], var_y=vy, share=effgs[g] / vy, sigma=σgs[g]))
+                    end
                 end
                 push!(noise_rows, (; set, band, domain, output=out, year=yr, var_y=vy, n_base=N,
                     sigma_max_input=maximum(σ), sigma_median_input=median(σ), sigma_max_top=maximum(σ[top]),
@@ -159,14 +171,14 @@ for set in PF_SETS, band in BANDS
                 end
             end
             for (p, (plab, _, _)) in enumerate(PERIODS)
-                np[p] > 0 && push_aggregate!(period_rows, period_group_rows, Fp[p], Vp[p]; G, names_, set, band,
+                np[p] > 0 && push_aggregate!(period_rows, period_group_rows, Fp[p], Vp[p]; GS, names_, set, band,
                     domain, output=out, period=plab, kind="variance-weighted", n_years=np[p])
             end
             if out in MEAN_OUTPUTS                       # the mean over all (valid) years: an output of its own
                 vt = vy_idx[out]
                 Ybar = dropdims(mean(Yall[:, :, vt]; dims=3); dims=3)                  # [N, d + 1]
                 f, _, _, _ = increments(S, vec(permutedims(Ybar)), N)
-                push_aggregate!(period_rows, period_group_rows, f, var(vcat(Ybar[:, 1], Ybar[:, end])); G, names_,
+                push_aggregate!(period_rows, period_group_rows, f, var(vcat(Ybar[:, 1], Ybar[:, end])); GS, names_,
                     set, band, domain, output="mean_$out", period="$(years[first(vt)])-$(years[last(vt)])",
                     kind="time mean", n_years=length(vt))
             end
@@ -199,7 +211,7 @@ for g in groupby(noise, [:set, :band, :domain, :output]), δ in DELTAS
         spr = get(seconds_per_run, (set, band, domain), NaN)
         push!(req_rows, (; set, band, domain, output=out, delta=δ, criterion=crit, n_base_worst_year=nmax,
             worst_year=worst, n_base_median_year=nmed, runs_per_base=d1, runs_worst_year=nmax * d1,
-            cpu_h_local=nmax * d1 * spr / 3600, cpu_h_hpc=nmax * d1 * HPC_S_PER_RUN[domain] / 3600))
+            cpu_h_local=nmax * d1 * spr / 3600, cpu_h_hpc=nmax * d1 * hpc_s_per_run(domain) / 3600))
     end
 end
 req = DataFrame(req_rows)

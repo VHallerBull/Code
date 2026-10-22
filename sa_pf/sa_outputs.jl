@@ -23,6 +23,8 @@ Outputs (one value per year; `derive_outputs`):
     massive_share       massive cover / total cover (domain level)
     relative_juveniles  habitable-area weighted mean of "juveniles"
     coral_diversity     habitable-area weighted mean of "diversity"
+    thermal_all         "thermal_mean" pooled over the native groups, weighted by "thermal_weight" (NaN
+                        only where no group has weight: defined as long as any coral is left)
     thermal_<group>     "thermal_mean" of each native group (NaN where its weight is 0)
     spatial_cv          SD / mean of "cover" across the reefs (domains with more than one reef)
 =#
@@ -77,6 +79,7 @@ function output_order(names; thermal_groups=String[])
     names = String.(collect(names))
     fixed = ["relative_cover", "acropora_share", "massive_share", "relative_juveniles", "coral_diversity"]
     out = [n for n in fixed if n in names]
+    THERMAL_ALL in names && push!(out, THERMAL_ALL)
     append!(out, [thermal_name(g) for g in thermal_groups if thermal_name(g) in names])
     append!(out, sort([n for n in names if is_thermal(n) && !(n in out)]))
     "spatial_cv" in names && push!(out, "spatial_cv")
@@ -86,10 +89,13 @@ end
 
 is_thermal(name) = startswith(String(name), "thermal_")
 thermal_name(group) = "thermal_" * String(group)
+"The thermal tolerance pooled over all native groups."
+const THERMAL_ALL = "thermal_all"
 
 "Readable label of an output."
 function output_label(name)::String
     n = String(name)
+    n == THERMAL_ALL && return "Thermal tolerance: all corals"
     is_thermal(n) && return "Thermal tolerance: " * n[9:end]
     return get(Dict(
         "relative_cover" => "Relative cover", "acropora_share" => "Acropora share",
@@ -122,6 +128,10 @@ function derive_outputs(S::AbstractDict; thermal_groups=String[])::Dict{String,V
         size(M, 2) == length(thermal_groups) || error("thermal_mean has $(size(M, 2)) groups, $(length(thermal_groups)) names")
         for (g, name) in enumerate(thermal_groups)
             out[thermal_name(name)] = [W[t, g] > 0 ? Float64(M[t, g]) : NaN for t in axes(M, 1)]
+        end
+        out[THERMAL_ALL] = map(axes(M, 1)) do t
+            has = W[t, :] .> 0
+            any(has) ? sum(Float64.(M[t, has]) .* W[t, has]) / sum(W[t, has]) : NaN
         end
     end
     if size(cover, 2) > 1
@@ -194,16 +204,11 @@ end
 """
     valid_years(Y, outs, ok) -> Dict output => year indices to analyse
 
-A year with a missing value (NaN) in any analysed walk is left out of that output. For the thermal
-outputs a year is left out of all of them together (a group without weight in that year drops the year).
+A year with a missing value (NaN) in any analysed walk is left out of that output, each output on its
+own: a group without weight in a year (e.g. a C~scape functional type gone locally extinct in one run)
+drops that year of its own thermal output only, not of the other groups' or of `thermal_all`.
 """
 function valid_years(Y, outs, ok)
     good(o) = [t for t in axes(Y[o], 3) if !any(isnan, @view Y[o][ok, :, t])]
-    v = Dict(o => good(o) for o in outs)
-    th = filter(is_thermal, outs)
-    if !isempty(th)
-        common = reduce(intersect, [v[o] for o in th])
-        foreach(o -> v[o] = common, th)
-    end
-    return v
+    return Dict(o => good(o) for o in outs)
 end
