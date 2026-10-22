@@ -302,6 +302,7 @@ function apply_domain_multipliers(dom::ADRIA.Domain, row)
     ld.k = min.(Float64.(ld.k) .* m(:m_k), 1.0)
     ld.area = Float64.(ld.area) .* m(:m_area)
     :ub in propertynames(ld) && (ld.ub = Float64.(ld.ub) .* m(:m_ub))
+    :ub_med in propertynames(ld) && (ld.ub_med = Float64.(ld.ub_med) .* m(:m_ub))   # read by C~scape
     d.wave_scens.data .*= m(:m_ub)
     groups = [m(Symbol("m_cover_fg$g")) for g in 1:5]
     d.init_coral_cover.data .= scale_initial_cover(d.init_coral_cover.data, m(:m_cover_total), groups)

@@ -1,0 +1,52 @@
+# C~scape's groups (CScape/CScape_sampled_parameters.md), added to the shared DHW and domain groups. Edit
+# freely: every input must end up in exactly one group per scheme.
+#
+# Agreed 2026-10-22. The input names follow CScape_sampled_parameters.md; the model code
+# (Code/sa/models/cscape.jl) must use them. FT suffixes: acro_table, acro_corym, corym_non_acro, small_massive, large_massive, brooder.
+# Nothing is inert: C~scape reads depth and wave exposure (m_depth, m_ub).
+
+extends = "shared.toml"
+
+[[scheme]]
+name = "block"
+  [[scheme.group]]
+  name = "Model"
+  match = ["^(?!dhw_|m_)"]
+
+[[scheme]]
+name = "process"
+  [[scheme.group]]
+  name = "Growth"
+  match = ["^draw_growth_"]
+  [[scheme.group]]
+  name = "Survival"
+  match = ["^draw_surv_"]
+  [[scheme.group]]
+  name = "Recruitment: spawners"
+  match = ["^(draw_fecundity|fert_prob|cont_prob|size1yr_mean|size1yr_sd|juvi_cap)_(acro_table|acro_corym|corym_non_acro|small_massive|large_massive)$",
+           "^recruitment_multiplier$"]
+  [[scheme.group]]
+  name = "Recruitment: brooders"
+  match = ["^(draw_fecundity|fert_prob|cont_prob|size1yr_mean|size1yr_sd|juvi_cap)_brooder$", "^brooder_retention$"]
+  [[scheme.group]]
+  name = "Bleaching"
+  match = ["^bleaching_"]
+  [[scheme.group]]
+  name = "Adaptation"
+  match = ["^heritability$", "^heat_tolerance_sd$"]
+
+# Where an input's range comes from: the fitted brms posteriors (data-driven) or an assumed +-band.
+[[scheme]]
+name = "source"
+  [[scheme.group]]
+  name = "DHW"
+  match = ["^dhw_"]
+  [[scheme.group]]
+  name = "Domain"
+  match = ["^m_"]
+  [[scheme.group]]
+  name = "Model: fitted posterior"
+  match = ["^draw_"]
+  [[scheme.group]]
+  name = "Model: assumed range"
+  match = ["^(?!dhw_|m_|draw_)"]

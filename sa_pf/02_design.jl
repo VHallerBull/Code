@@ -5,7 +5,8 @@
 
 e.g. `02_design.jl coralpop 256 0.1 0.2 0.5`. Writes, per band and the same for both domains,
 <ModelFolder>/model_run_pf_pilot/band<NN>/design_pf.jld2 (set `main`: with the DHW inputs, d = 176 for
-CoralPop) and design_pf_zero.jld2 (set `zero`: no heat stress, no DHW inputs, d = 168), each with `A`,
+CoralPop, 83 for C~scape) and design_pf_zero.jld2 (set `zero`: no heat stress, no DHW inputs, d = 168 /
+75), each with `A`,
 `B`, `perms`, `constants`, `spec`, `n_shared`, `names`, `band`, `n_base`, `set`, plus its sizes in
 design_pf[_zero].toml. Runs = n_base x (d + 1). The folder is `CMR_PF_SUBDIR` (default model_run_pf_pilot).
 A larger n_base gives the same first walks (pf_common.jl), so a design can be extended later.

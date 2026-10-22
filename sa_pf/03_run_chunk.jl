@@ -10,7 +10,8 @@ Each job writes <band>/<domain>/chunks/proc_<pp>_of_<nn>.jld2 (skipped if it exi
 `base` (base-sample indices), `S` (the runs' state summaries, sa_outputs.jl: Dict key => [d + 1, dims...,
 n_base_here]), `dhw` (domain-mean DHW, [d + 1, years, n_base_here]), `failed` (base samples with a failed
 run), `seconds`, `n_runs`, `years`, `thermal_groups`. No other run output is kept.
-CoralPop runs through Python, so parallelism is one process per share (no threads).
+Parallelism is one process per share: CoralPop runs through Python (no threads); C~scape can also use
+Julia threads in its per-site loop (`julia -t`), which gains little on one reef.
 
     julia ... 03_run_chunk.jl <model> --bases=<first>:<last> <band:domain[:zero]> [...]
 

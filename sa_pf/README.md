@@ -34,17 +34,31 @@ back. Each run instead returns a small **state summary**, built by the model's a
 | `acropora_share`, `massive_share` | Acropora (ADRIA groups 1+2) and massive (4+5) cover / total cover, on 3 harmonised classes (the third: corymbose non-Acropora) | all with morphology (not CORSET) |
 | `relative_juveniles` | ADRIAIndicators `relative_juveniles` with the model's own juvenile classes | models with colony sizes (not CoCoNet, CORSET) |
 | `coral_diversity` | ADRIAIndicators `coral_diversity` over the model's own groups | not CORSET |
-| `thermal_<group>` | mean thermal tolerance per native group on the model's own scale and weighting (as Code/09's `thermal_mean_native.png`) | models with heritable tolerance (not CoralPop, CORSET) |
+| `thermal_all` | the groups' mean thermal tolerances pooled with their weights: defined as long as any coral is left | models with heritable tolerance (not CoralPop, CORSET) |
+| `thermal_<group>` | mean thermal tolerance per native group on the model's own scale and weighting (as Code/09's `thermal_mean_native.png`); missing in a year where the group has no cover | models with heritable tolerance (not CoralPop, CORSET) |
 | `spatial_cv` | SD / mean of per-reef relative cover | domains with more than one reef |
 
 State summary per run (Float32, about 6 KB on NineReefs): per reef and year the relative cover and the
 3 class covers, `relative_juveniles` and `coral_diversity`; each reef's habitable area; per group and
 year the mean tolerance and its weight (where the model has them). A year with a missing value in any
-analysed walk is left out of that output, and of all thermal outputs together
-(`analysis/dropped_years.csv`).
+analysed walk is left out of that output only (`analysis/dropped_years.csv`): a group gone locally extinct
+in one run drops that year of its own `thermal_<group>`, not of `thermal_all` or the other groups'.
 
-**A new model** needs only `adapters/<model>.jl`: `PF_CLASS_OF_GROUP` (from its `*_ADRIA_GROUPS` table via
-`native_group_class`), `PF_THERMAL_GROUPS`, and `state_summary(r)` from its `run_row` result.
+**Groups:** `effects.csv` and the figures use the `process` scheme; `group_effects.csv` and
+`period_group_effects.csv` hold every scheme of `Code/sa/shapley/groups/<model>.toml` (`scheme` column, e.g.
+C~scape's `source`), and `06_figures.jl` draws the group figures (`groups_time_*`, `groups_bands_*`) for each,
+with `_<scheme>` in the file name for schemes other than `process`.
+
+**A new model** needs `Code/sa/models/<model>.jl` (its `run_row`), `adapters/<model>.jl` (`PF_CLASS_OF_GROUP`
+from its `*_ADRIA_GROUPS` table via `native_group_class`, `PF_THERMAL_GROUPS`, and `state_summary(r)` from its
+`run_row` result), a branch in `pf_common.jl`'s `model_spec_band`, and its folder and label in `06_figures.jl`
+and `run_pilot.sh`.
+
+**C~scape** runs in its own environment, `Code/sa/models/cscape` (CScape.jl and CscapeInterface.jl on their
+`sa-pick-freeze` branches, which add the inputs of `CScape/CScape_sampled_parameters.md` section 0), for
+every script, e.g. `julia +release --project=Code/sa/models/cscape Code/sa_pf/02_design.jl cscape 256 0.5`
+or `MODEL=cscape bash Code/sa_pf/run_pilot.sh`. Its tests: `Code/sa_pf/test/runtests_cscape.jl` (same
+environment). Loading the packages takes about 30 s per process.
 
 | Script | Env | Does |
 |---|---|---|
@@ -55,9 +69,10 @@ analysed walk is left out of that output, and of all thermal outputs together
 | `04_collect.jl <model> <band>...` | `Code/sa/shapley` | `pf_results.jld2` (+ `pf_zero.jld2`) per band and domain: the state summaries and the outputs derived from them |
 | `05_analyse.jl <model> <band>...` | `Code/sa/shapley` | `analysis/`: effects, group effects, noise, base samples needed, period aggregates (variance-weighted shares 2025–2035 / 2036–2050 / 2025–2050 and the mean relative cover as an output), convergence figures, `PILOT.md` |
 | `06_figures.jl <model> [year...]` | `Code/sa/shapley` | `analysis/final_figures/`: output trajectories (with the zero-DHW reference), per-input and per-group figures, `periods_<output>` (shares per period) |
-| `run_pilot.sh [n_base] [n_procs] [sets]` | | 02 -> 03 (parallel processes; sets `main zero` by default) -> 04 for bands 0.1, 0.2, 0.5 |
+| `run_pilot.sh [n_base] [n_procs] [sets]` | | 02 -> 03 (parallel processes; sets `main zero` by default) -> 04; env `MODEL` (default coralpop), `BANDS` (default 0.1 0.2 0.5), `DOMAINS` (default both) |
 | `sa_outputs.jl` | (any) | output definitions, state-summary storage and derivation (no package dependencies) |
 | `adapters/<model>.jl` | | the model's state summary |
+| `test/runtests_cscape.jl` | `Code/sa/models/cscape` | C~scape: factors and groups, inputs reaching the engine (DHW, brooder retention, `m_ub`, draws, constants, bleaching coefficients), determinism, output ranges |
 | `test/runtests.jl` | `Code/sa/shapley` | walks = SAShE's table, permutations, extension (prefix-stable designs), A/B independence, toy model, output derivations, CoralPop adapter on real runs |
 | `hpc/` | | HPC image staging (`stage_pf.sh`), Slurm jobs (`pf_submit.sh`, `pf_chunk.slurm`, `pf_collect.slurm`) and `RUNNING_PF_ON_HPC.md` |
 

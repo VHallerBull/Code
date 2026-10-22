@@ -6,7 +6,7 @@ trajectory. Separate from Code/sa: it only includes (reads) sa_common.jl and mod
     MODEL = "coralpop"
     include(joinpath(@__DIR__, "pf_common.jl"))
 
-Inputs (d = 176 for CoralPop): 7 DHW parameters (fixed ranges, SamplingSetup.docx Table 2) +
+Inputs (d = 176 for CoralPop, 83 for C~scape): 7 DHW parameters (fixed ranges, SamplingSetup.docx Table 2) +
 `dhw_weather` (1..1024) + 13 domain multipliers U(1 - band, 1 + band) + the model's native factors at
 +-band. The first 21 (DHW + domain) are shared by every model: their A and B values come from one
 model-independent sample, and their relative order in each walk is the same for every model, so every
@@ -63,11 +63,17 @@ weather_spec()::DataFrame = _spec([(:dhw_weather, 512.0, DiscreteUniform, (1.0, 
 "Shared block: 7 DHW parameters (fixed ranges), the weather index, 13 multipliers at +-band."
 shared_spec(band::Real)::DataFrame = vcat(dhw_spec(), weather_spec(), multiplier_spec((1 - band, 1 + band)))
 
-"The model's native factors at +-band (CoralPop: the same call as models/coralpop.jl, other band)."
+"""
+The model's native factors at +-band: CoralPop the same call as models/coralpop.jl, other band; C~scape
+`cscape_native_spec` (models/cscape.jl): the posterior draws over all draws at every band, the
+bleaching slope at most ±20 % (CScape/CScape_sampled_parameters.md).
+"""
 function model_spec_band(band::Real)::DataFrame
-    MODEL == "coralpop" || error("model_spec_band: add $MODEL")
-    return coralpop_native_spec(; band=Float64(band), larvae_via_connectivity=LARVAE_VIA_CONNECTIVITY,
-        rcp=parse(Int, SA_RCP), year_start=SA_YEARS[1], year_end=SA_YEARS[2])
+    MODEL == "coralpop" && return coralpop_native_spec(; band=Float64(band),
+        larvae_via_connectivity=LARVAE_VIA_CONNECTIVITY, rcp=parse(Int, SA_RCP),
+        year_start=SA_YEARS[1], year_end=SA_YEARS[2])
+    MODEL == "cscape" && return cscape_native_spec(; band=Float64(band))
+    error("model_spec_band: add $MODEL")
 end
 
 ## ---------------------------------------------------------------------------------------------------
